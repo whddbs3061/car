@@ -6,8 +6,8 @@ import time
 from lib.network.UDP import Receiver
 from lib.define.IMU import IMU
 
-IP = '127.0.0.1' 
-PORT = 1111
+IP = '192.168.0.200' 
+PORT = 4001
 
 #Protocol 정보
 #https://help-morai-sim.scrollhelp.site/ko/morai-sim-drive/24.R2/ros-1#id-(24.R2-ko)통신메시지프로토콜-EgoVehicleStatus.1
