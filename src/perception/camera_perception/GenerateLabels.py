@@ -41,6 +41,7 @@ import collections
 import json
 import math
 import os
+import re
 
 import cv2
 import numpy as np
@@ -647,23 +648,43 @@ def find_frame_source(recording):
     raise SystemExit(f"프레임을 찾을 수 없습니다 (frames/*.png 또는 drive.mp4): {recording}")
 
 
-def read_frames(source, indices):
-    """지정한 인덱스의 프레임만 뽑는다.
+def frame_index_of(path):
+    """파일명에서 프레임 번호를 읽는다 (frame_000123.png → 123). 없으면 None."""
+    m = re.findall(r"\d+", os.path.basename(path))
+    return int(m[-1]) if m else None
 
-    idx 는 meta.jsonl 의 idx 와 1:1이다 — RecordDrive 가 프레임과 meta 를 같은
-    순서로 쓰기 때문이다. 이미지 폴더면 **파일명 정렬 순서**가 그 순서가 되므로
-    0 채움 번호(frame_000123.png)로 저장해야 한다.
+
+def read_frames(source, indices):
+    """지정한 인덱스의 프레임만 뽑는다. idx 는 meta.jsonl 의 idx 다.
+
+    **이미지 폴더에서는 리스트 위치가 아니라 파일명의 번호를 쓴다.** 학습용
+    프레임은 N장마다 하나씩만 저장하므로(frame_000000, frame_000008, ...)
+    위치로 찾으면 8번 프레임 그림에 1번 프레임의 자차 위치로 만든 라벨이
+    붙는다. 연속 저장일 때만 우연히 맞는다.
     """
     kind, path = source
     want = sorted(set(indices))
 
     if kind == "images":
+        table = {}
+        for q in path:
+            i = frame_index_of(q)
+            if i is not None:
+                table[i] = q
+        if not table:
+            # 번호가 없는 파일명이면 정렬 순서로 대체한다 (권장하지 않음)
+            print("[경고] 파일명에 프레임 번호가 없어 정렬 순서를 씁니다. "
+                  "N장마다 저장했다면 라벨이 어긋납니다.")
+            table = dict(enumerate(path))
+
         got = {}
         for i in want:
-            if 0 <= i < len(path):
-                img = cv2.imread(path[i])
-                if img is not None:
-                    got[i] = img
+            q = table.get(i)
+            if q is None:
+                continue
+            img = cv2.imread(q)
+            if img is not None:
+                got[i] = img
         return got
 
     cap = cv2.VideoCapture(path)
