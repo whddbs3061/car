@@ -416,11 +416,13 @@ def road_height(links, link_id, pos_x, pos_y, fallback):
 # ======================================================================
 # 보닛 (정적 가림막)
 # ======================================================================
-def detect_bonnet(video, model_path, samples=30):
+def detect_bonnet(source, model_path, samples=30):
     """자차 보닛이 가리는 화면 영역을 찾는다.
 
     지면 폴리곤을 투영하면 **보닛에 가려진 부분까지 칠해진다.** 그대로 두면
     "보닛 위에 차선이 있다"고 학습되므로 ignore 로 빼야 한다.
+
+    입력은 영상이든 PNG 폴더든 상관없다 (find_frame_source 가 돌려준 (kind, path)).
 
     시간축 분산으로는 못 찾는다 — 보닛이 반사가 있어 하늘·풍경이 비쳐 계속
     변하기 때문이다(실측: y=470 에서도 std 17.3). 대신 기존 모델의 주행가능
@@ -429,13 +431,21 @@ def detect_bonnet(video, model_path, samples=30):
     """
     net = cv2.dnn.readNet(model_path)
     names = net.getUnconnectedOutLayersNames()
-    cap = cv2.VideoCapture(video)
+    kind, path = source
+    if kind == "images":
+        step = max(1, len(path) // samples)
+        supply = (cv2.imread(q) for q in path[::step])
+        stride = 1
+    else:
+        cap = cv2.VideoCapture(path)
+        supply = iter(lambda: cap.read()[1], None)
+        stride = 80
+
     acc, got, n = None, 0, 0
-    while got < samples:
-        ok, img = cap.read()
-        if not ok:
+    for img in supply:
+        if img is None or got >= samples:
             break
-        if n % 80 == 0:
+        if n % stride == 0:
             blob = cv2.dnn.blobFromImage(img, 1 / 255.0, (640, 360), (0, 0, 0),
                                          swapRB=True, crop=False)
             net.setInput(blob)
@@ -446,7 +456,8 @@ def detect_bonnet(video, model_path, samples=30):
             acc = da if acc is None else acc + da
             got += 1
         n += 1
-    cap.release()
+    if kind == "video":
+        cap.release()
     if acc is None:
         return None
 
@@ -593,12 +604,56 @@ def load_meta(path):
         return [json.loads(line) for line in fp if line.strip()]
 
 
-def read_frames(video, indices):
-    """지정한 인덱스의 프레임만 뽑는다. idx 는 meta.jsonl 의 idx 와 1:1이다."""
-    cap = cv2.VideoCapture(video)
-    if not cap.isOpened():
-        raise SystemExit(f"영상을 열 수 없습니다: {video}")
+IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".bmp")
+
+
+def find_frame_source(recording):
+    """녹화 폴더에서 프레임 출처를 찾는다. (kind, path) 를 돌려준다.
+
+    학습 데이터는 PNG 로 저장한다 — mp4 는 H.264 손실 압축이라 1~3px 얇은 차선을
+    뭉갠다. 그래서 두 형식을 다 읽을 수 있어야 하고, **PNG 폴더를 우선**한다
+    (둘 다 있으면 mp4 는 육안 확인용으로 남겨둔 것이다).
+    """
+    frames_dir = os.path.join(recording, "frames")
+    if os.path.isdir(frames_dir):
+        names = sorted(n for n in os.listdir(frames_dir)
+                       if n.lower().endswith(IMAGE_EXTS))
+        if names:
+            return "images", [os.path.join(frames_dir, n) for n in names]
+
+    names = sorted(n for n in os.listdir(recording)
+                   if n.lower().endswith(IMAGE_EXTS) and n != "bonnet_mask.png")
+    if names:
+        return "images", [os.path.join(recording, n) for n in names]
+
+    video = os.path.join(recording, "drive.mp4")
+    if os.path.isfile(video):
+        return "video", video
+    raise SystemExit(f"프레임을 찾을 수 없습니다 (frames/*.png 또는 drive.mp4): {recording}")
+
+
+def read_frames(source, indices):
+    """지정한 인덱스의 프레임만 뽑는다.
+
+    idx 는 meta.jsonl 의 idx 와 1:1이다 — RecordDrive 가 프레임과 meta 를 같은
+    순서로 쓰기 때문이다. 이미지 폴더면 **파일명 정렬 순서**가 그 순서가 되므로
+    0 채움 번호(frame_000123.png)로 저장해야 한다.
+    """
+    kind, path = source
     want = sorted(set(indices))
+
+    if kind == "images":
+        got = {}
+        for i in want:
+            if 0 <= i < len(path):
+                img = cv2.imread(path[i])
+                if img is not None:
+                    got[i] = img
+        return got
+
+    cap = cv2.VideoCapture(path)
+    if not cap.isOpened():
+        raise SystemExit(f"영상을 열 수 없습니다: {path}")
     got, cursor = {}, 0
     for target in want:
         while cursor <= target:
@@ -617,7 +672,7 @@ def main():
         description="HD맵을 카메라에 투영해 차선 종류 라벨을 만든다 "
                     "(지금은 초점거리 확정을 위한 오버레이 검증 단계)")
     ap.add_argument("--recording", required=True,
-                    help="drive.mp4 와 meta.jsonl 이 있는 폴더")
+                    help="meta.jsonl 과 프레임(frames/*.png 또는 drive.mp4)이 있는 폴더")
     ap.add_argument("--mgeo", required=True, help="MGeo 폴더 (lane_boundary_set.json 등)")
     ap.add_argument("--cam-set", required=True, help="cam_set.json 경로")
     ap.add_argument("--sensor-id", type=int, default=1, help="카메라 SensorUniqueID (기본 1=전방)")
@@ -633,12 +688,14 @@ def main():
     args = ap.parse_args()
 
     meta = load_meta(os.path.join(args.recording, "meta.jsonl"))
-    video = os.path.join(args.recording, "drive.mp4")
+    source = find_frame_source(args.recording)
+    print(f"프레임 출처: {source[0]} "
+          f"({len(source[1]) if source[0] == 'images' else os.path.basename(source[1])})")
     bonnet_path = os.path.join(args.recording, "bonnet_mask.png")
     if args.detect_bonnet:
         model = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                              "lane_segmentation.onnx")
-        mask = detect_bonnet(video, model)
+        mask = detect_bonnet(source, model)
         if mask is None:
             raise SystemExit("보닛 검출 실패 (프레임을 못 읽었습니다)")
         cv2.imwrite(bonnet_path, mask)
@@ -663,7 +720,7 @@ def main():
 
     indices = [int(x) for x in args.frames.split(",") if x.strip()]
     indices = [i for i in indices if i < len(meta)]
-    frames = read_frames(video, indices)
+    frames = read_frames(source, indices)
     if not frames:
         raise SystemExit("프레임을 읽지 못했습니다.")
 
