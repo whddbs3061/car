@@ -8,22 +8,15 @@
 대시 간격(`dash_interval`), 차선폭(`lane_width`)이 전부 들어 있기 때문이다.
 
 --------------------------------------------------------------------------
-초점거리: FOV 90 은 **수평** — 확정됨
+지금 이 파일의 목적: 초점거리 확정
 --------------------------------------------------------------------------
-cam_set.json 의 `cameraFOV` 에는 수평인지 수직인지 적혀 있지 않다. 90도가
-수평이면 f=640, 수직이면 f=360 으로 **1.78배** 차이가 난다.
+cam_set.json 의 `cameraFOV` 가 **수평인지 수직인지 적혀 있지 않다.** 90도가
+수평이면 f=640, 수직이면 f=360 으로 1.78배 차이가 나고, 틀리면 라벨이 전부
+어긋난 채로 학습이 "정상적으로" 돌아가 원인을 찾기 어려운 실패가 된다.
 
-두 가설을 나란히 렌더링해 확정했다 — 수평에서 황색 오버레이가 중앙선에,
-파란 점선이 흰 점선에 정확히 얹힌다. 수직은 눈에 띄게 어긋난다.
-그래서 `--fov-axis` 기본값은 `horizontal` 이다.
-
-**수치 지표로는 이걸 못 가린다.** 두 가설의 `fy/fx` 가 1.333 으로 같아서 지면
-역투영의 가로 좌표 `X ∝ fy/fx` 가 동일하다 — 차로폭이든 가로오차든 같은 숫자가
-나온다. 겹침 비율은 더 나쁘다: 틀린 가설이 투영을 소실점 쪽으로 압축시키는데
-거기가 검출이 조밀한 곳이라 **압축을 보상해버려 틀린 쪽이 이긴다.** 지도의 3D
-좌표를 투영해 픽셀 위치를 보는 것(=오버레이)만이 판별한다.
-
-카메라를 바꾸면 `--fov-axis both` 로 다시 확인할 수 있게 두 가설 모두 남겨 뒀다.
+그래서 `--fov-axis both` 로 두 가설을 나란히 렌더링해 **눈으로 고른다.**
+맞는 쪽은 투영선이 영상 속 차선 위에 얹히고, 틀린 쪽은 도로 밖으로 나가거나
+터무니없이 좁게 모인다. 고른 뒤 `--fov-axis` 를 그 값으로 고정해서 쓴다.
 
 --------------------------------------------------------------------------
 데이터에서 확정한 좌표 관례 (추측하지 말 것)
@@ -41,6 +34,32 @@ cam_set.json 의 `cameraFOV` 에는 수평인지 수직인지 적혀 있지 않�
 
 `link_id` 는 HD맵 정보라 인지 파이프라인 입력으로는 쓰지 않는다 (실차에 없다).
 여기서 쓰는 건 **라벨 생성** 용도이므로 문제가 없다.
+
+--------------------------------------------------------------------------
+정합에서 실제로 문제가 됐던 것 (실측으로 확정)
+--------------------------------------------------------------------------
+정지 프레임에서 잰 편차 (도색 - 라벨), 황색 중앙선 / 흰 실선 / 좌우 폭:
+
+    yaw 만 + 노면기준 높이   +0.42 m / -0.12 m   폭 2.57 vs 3.12 m
+    pos_z 를 원점으로        -0.14 m / +0.06 m   폭 3.38 vs 3.17 m
+    + roll/pitch 까지        -0.02 m / +0.02 m   폭 3.38 vs 3.36 m   <- 현재
+
+1. **`pos_z` 는 노면이 아니라 차체 원점**이다. 링크 노면보다 일정하게 +0.35m
+   높다 (still +0.363, curve1 +0.340). 승용차 바퀴 반지름과 맞고, 차량 제원
+   (전장 4.635 = 휠베이스 3.0 + 앞오버행 0.845 + 뒤오버행 0.79)과 함께 보면
+   원점은 후륜축 중심·차축 높이다. 그래서 카메라 노면 높이는 1.20 이 아니라
+   pos_z + 1.20 - 노면z = 약 **1.56m** 다. 이걸 1.20 으로 두면 거리 추정이
+   전부 어긋나 차로폭이 2.57m 로 나온다 (실제 3.38m).
+2. **roll/pitch 를 써야 한다.** 도로 경사·뱅크 때문에 정지 중에도 0 이 아니다
+   (정지 프레임 pitch +0.68도). pitch 오차는 가로가 아니라 세로로 터진다 —
+   d ~ h/theta 라 delta_d ~ -d^2*delta/h, 10m 에서 2도면 2.9m 다. 직선에서는
+   차선이 진행방향과 나란해 티가 안 나고 **커브에서만** 크게 어긋난다.
+3. **yaw 바이어스 -1.361도** 는 남는다. 이동방향 atan2(dy,dx) 와 yaw 의 차이를
+   직선 주행에서 재도 -1.361도 로 같다. `--yaw-offset -1.361` 로 넣는다.
+4. 가로 평행이동(`--lat-offset`)은 **0 이 맞다.** 한때 -0.45 를 넣었는데,
+   그건 위의 1·2 를 안 고친 상태에서 좌우 편차의 평균을 맞추려던 것이라
+   한쪽을 맞추면 반대쪽이 틀어졌다. 좌우가 서로 반대로 벌어지는 오차는
+   평행이동으로 고칠 수 없다 — 그게 높이/자세 문제라는 신호였다.
 """
 
 import argparse
@@ -59,9 +78,9 @@ CLASS_BG = 0
 CLASS_WHITE_SOLID = 1
 CLASS_WHITE_DASHED = 2
 CLASS_YELLOW = 3
-CLASS_STOPLINE = 4          # lane_type 530 (아래 참고). 별도 파일이 필요 없다
+CLASS_STOPLINE = 4          # surface_marking_set.json 필요 — 아직 확보 못 함
 CLASS_GUIDE = 5             # 유도선 (촘촘한 점선)
-CLASS_ZONE = 6              # 굵은 노면 도색. 지금은 비어 있다 (아래 참고)
+CLASS_ZONE = 6              # 안전지대 등 굵은 노면 도색
 CLASS_CROSSWALK = 7         # 횡단보도
 CLASS_IGNORE = 255          # 가려짐 등 손실에서 제외할 픽셀
 
@@ -121,7 +140,14 @@ CLASS_COLORS = {
 DOUBLE_PAIR_RADIUS = 0.6
 
 RESAMPLE_STEP = 0.25        # 폴리라인 재보간 간격 (m). 대시 3m 를 12조각으로 나눈다
-MAX_RANGE = 80.0            # 이보다 먼 차선은 버린다 (몇 픽셀도 안 되고 느려진다)
+MAX_RANGE = 30.0            # 이보다 먼 차선은 버린다.
+# 원래 80m 였다. curve2 idx=416 에서 실측: 급커브(30도/s대) 중 경계선을 거의
+# 접선 방향(비스듬한 각도)으로 오래 보게 되는 구간이 있는데, 그런 시야에서는
+# 1도 미만의 잔여 오차도 원근 투영상 몇 m 로 증폭된다 (같은 지점을 지나는
+# idx=407/416/423 세 프레임에서 yaw 가 129->156->173도로 바뀌는 동안 407 은
+# 원거리까지 정확했다가 416/423 에서 크게 벌어짐 — 지도나 캘리브레이션 결함이
+# 아니라 원거리+비스듬한 시야각의 기하학적 민감도였다). 30m 로 자르면 이 왜곡
+# 구간이 통째로 없어지고, 어차피 차선 인식에는 근~중거리가 더 중요하다.
 NEAR_PLANE = 0.5            # 카메라 앞 이 거리보다 가까우면 투영하지 않는다
 
 
@@ -131,16 +157,18 @@ NEAR_PLANE = 0.5            # 카메라 앞 이 거리보다 가까우면 투영
 class CameraModel:
     """MORAI 카메라의 핀홀 모델. lensDistortion 이 [0,0,0] 이라 왜곡 항이 없다.
 
-    **원본 해상도와 저장 해상도를 분리해서 들고 있어야 한다.** 센서는 1280x720
-    (16:9) 인데 RecordDrive 가 640x480 (4:3) 으로 줄여 저장했다. 이건 가로세로
-    배율이 다른 비등방 축소라 `fx != fy` 가 된다:
+    내부 파라미터는 `cameraFOV` 하나만 믿는다. cam_set.json 의 다른 광학값들은
+    서로 모순된다 — sensorSize 36x24mm / focalLengthmm 16 이면 수평 FOV 96.4도,
+    focalLengthpixel 320 이면 126.9도 인데 cameraFOV 는 90 이다. 오버레이로
+    확정한 값은 FOV 90 **수평**, 즉 1280x720 에서 f = 640 이다.
 
-        원본 1280x720, FOV 90 수평  →  f = 640 (정사각 픽셀)
-        640x480 저장                →  fx = 640*(640/1280) = 320
-                                       fy = 640*(480/720)  = 426.7
+    주점(cx, cy)은 이미지 중심으로 둔다. cam_set 의 sensorShift 가 (0,0) 이라
+    이 경우엔 맞지만, 측정한 값이 아니라 가정이라는 점은 알고 있어야 한다.
 
-    두 축을 같은 값으로 두면 세로가 33% 틀린 채 투영된다. 구조는 맞아 보이는데
-    정합만 나쁜, 찾기 어려운 오차가 된다.
+    **원본 해상도와 저장 해상도를 분리해서 들고 있다.** 지금 RecordDrive 는
+    원본 1280x720 그대로 저장하므로 fx = fy = 640 으로 등방이다. 예전처럼
+    640x480 (4:3) 으로 줄여 저장하면 비등방 축소라 fx != fy 가 되고, 두 축을
+    같은 값으로 두면 세로가 33% 틀린 채 투영된다.
     """
 
     def __init__(self, width, height, fov_deg, fov_axis, mount_pos, mount_rot,
@@ -176,22 +204,27 @@ class CameraModel:
                            self.native_width, self.native_height)
 
     def to_camera(self, pts_ego):
-        """자차 좌표(x전방, y좌측, z상방) → 카메라 광학 좌표 (x우측, y하방, z전방)."""
+        """자차 좌표(x전방, y좌측, z상방) → 카메라 광학 좌표 (x우측, y하방, z전방).
+
+        장착 회전은 roll/pitch/yaw 를 모두 쓴다. 예전에는 yaw 를 읽어만 두고
+        쓰지 않았다 — 전방 카메라는 yaw=0 이라 티가 안 났지만 좌/우 카메라
+        (yaw 70도, 290도)에 쓰면 통째로 틀린다.
+        """
         p = np.asarray(pts_ego, dtype=np.float64) - self.mount_pos
-        Xc = -p[:, 1]
-        Yc = -p[:, 2]
-        Zc = p[:, 0]
 
-        # 카메라를 pitch 만큼 아래로 기울인다. 회전 후 정면·눈높이의 점은
-        # Yr = -sin(pitch)*Z < 0 (화면 위쪽) 이 되어야 한다 — 부호 확인용 기준.
+        cy, sy = math.cos(self.yaw), math.sin(self.yaw)
         cp, sp = math.cos(self.pitch), math.sin(self.pitch)
-        Yr = cp * Yc - sp * Zc
-        Zr = sp * Yc + cp * Zc
+        cr, sr = math.cos(self.roll), math.sin(self.roll)
+        # 차량축 기준 장착 회전의 역변환 (R_m^T p)
+        Rm = np.array([
+            [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+            [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+            [-sp,     cp * sr,                cp * cr],
+        ])
+        q = p @ Rm                      # 카메라 몸체축 (x전방, y좌측, z상방)
 
-        if self.roll:
-            cr, sr = math.cos(self.roll), math.sin(self.roll)
-            Xc, Yr = cr * Xc + sr * Yr, -sr * Xc + cr * Yr
-        return np.stack([Xc, Yr, Zr], axis=1)
+        # 몸체축 → 광학축 (x우측, y하방, z전방)
+        return np.stack([-q[:, 1], -q[:, 2], q[:, 0]], axis=1)
 
     def project_camera(self, cam_pts):
         """카메라 좌표 → 이미지 좌표. (uv, valid)."""
@@ -501,33 +534,109 @@ def detect_bonnet(source, model_path, samples=30):
 # ======================================================================
 # 라벨 렌더링
 # ======================================================================
-def to_ego(points_map, ego_x, ego_y, ego_yaw_deg, road_z):
-    """지도 ENU → 자차 좌표 (x 전방, y 좌측, z 노면 기준 높이).
+# 녹화본별 정합 보정. 지도와 시뮬레이터 도색 사이에 남는 오차를 여기서 흡수한다.
+# 원인이 확정되지 않았으므로 값을 하드코딩하지 않고 측정해서 넣는다 (--lat-offset,
+# --yaw-offset). lap1_full 실측: 편차(m) = +0.278 - 0.0158 x 거리 로, 상수항은
+# 가로 위치 오차, 기울기는 yaw 오차 -0.91도 에 해당했다.
+LAT_OFFSET_M = 0.0      # +면 라벨을 좌측(+y)으로 민다
+YAW_OFFSET_DEG = 0.0    # 자차 yaw 에 더한다
 
-    yaw 는 East 기준 반시계다 (drive6 이동방향으로 확인).
+
+# 차체 자세(roll/pitch)를 쓸지. 도로 경사·뱅크와 서스펜션 때문에 정지 중에도
+# 0 이 아니다 (실측: 정지 프레임에서 pitch +0.68도). pitch 오차는 가로가 아니라
+# 세로(거리)로 터진다 — d ~ h/theta 이므로 delta_d ~ -d^2*delta/h 라 10m 에서
+# 2도면 2.9m 다. 직선에서는 차선이 진행방향과 나란해 티가 안 나지만 커브에서는
+# 그 세로 오차가 그대로 가로 오차가 된다.
+USE_EGO_ATTITUDE = True
+# MORAI 의 pitch/roll 부호 관례는 문서로 확정되지 않아 오버레이로 고른다.
+EGO_PITCH_SIGN = 1.0
+EGO_ROLL_SIGN = 1.0
+
+
+def rot_vehicle_to_world(yaw_deg, pitch_deg, roll_deg):
+    """차량 좌표(x전방 y좌측 z상방) → 월드(ENU) 회전 행렬. R = Rz Ry Rx."""
+    y, p, r = (math.radians(a) for a in (yaw_deg, pitch_deg, roll_deg))
+    cy, sy = math.cos(y), math.sin(y)
+    cp, sp = math.cos(p), math.sin(p)
+    cr, sr = math.cos(r), math.sin(r)
+    return np.array([
+        [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+        [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+        [-sp,     cp * sr,                cp * cr],
+    ])
+
+
+def to_ego(points_map, row, road_z=None):
+    """지도 ENU → 자차 좌표 (x 전방, y 좌측, z 상방).
+
+    **자차의 xyz 와 rpy 를 모두 쓴다.** 예전에는 yaw 만 2D 로 돌리고 높이는
+    링크 노면 z 를 기준으로 삼았는데, 그러면 (a) 도로 경사·뱅크가 통째로
+    빠지고 (b) 카메라 높이가 실제와 어긋난다.
+
+    `pos_z` 는 노면이 아니라 **차체 원점(후륜축 중심, 차축 높이)** 이다 —
+    링크 노면보다 일정하게 +0.35m 높은 것으로 실측했다 (still +0.363,
+    curve1 +0.340). 그래서 원점을 pos_z 로 두면 카메라 높이가 저절로
+    pos_z + 1.20 - 노면z = 약 1.55m 로 맞는다. 예전 코드는 1.20m 였다.
     """
-    yaw = math.radians(ego_yaw_deg)
-    c, s = math.cos(yaw), math.sin(yaw)
-    dx = points_map[:, 0] - ego_x
-    dy = points_map[:, 1] - ego_y
-    return np.stack([
-        c * dx + s * dy,        # 전방
-        -s * dx + c * dy,       # 좌측
-        points_map[:, 2] - road_z,
-    ], axis=1)
+    ego_xyz = np.array([row["pos_x"], row["pos_y"],
+                        row["pos_z"] if "pos_z" in row else (road_z or 0.0)])
+    if USE_EGO_ATTITUDE and "pitch" in row and "roll" in row:
+        pitch = EGO_PITCH_SIGN * _wrap180(row["pitch"])
+        roll = EGO_ROLL_SIGN * _wrap180(row["roll"])
+    else:
+        pitch = roll = 0.0
+    R = rot_vehicle_to_world(row["yaw"] + YAW_OFFSET_DEG, pitch, roll)
+
+    # 월드 → 차량 = R^T (P - C).  (P-C) @ R 로 계산하면 같다.
+    out = (points_map - ego_xyz) @ R
+    out[:, 1] += LAT_OFFSET_M
+    return out
+
+
+def _wrap180(a):
+    """MORAI 는 자세각을 0~360 으로 주기도 한다. -180~180 으로 편다."""
+    return ((a + 180.0) % 360.0) - 180.0
 
 
 def _dash_keep(s, dash_on, dash_off):
-    """대시 구간이면 True. 점선을 통으로 그리면 모델이 실선처럼 배운다."""
+    """대시 구간이면 True. 점선을 통으로 그리면 모델이 실선처럼 배운다.
+
+    지도의 dash_interval 을 그대로 믿을 때만 쓴다 (프레임 이미지가 없을 때의
+    대비책). 실측으로 확인했듯 이 값이 실제 렌더링된 대시 리듬과 다른
+    레코드가 있다 — 같은 lane_type=503, 같은 선언값(3.0/5.0)인데 한 레코드는
+    실측 주기 8.0m(선언과 일치), 다른 레코드는 9.4m(17~21% 김)로 서로 다르다.
+    전역 배율 하나로 보정할 수 없는 레코드별 편차라, 프레임 이미지가 있으면
+    `_paint_mask` 로 실제 도색 여부를 직접 읽는 쪽이 훨씬 정확하다.
+    """
     period = dash_on + dash_off
     if period <= 1e-6:
         return np.ones(len(s), dtype=bool)
     return np.mod(s, period) < dash_on
 
 
+def _paint_mask(frame, cls):
+    """프레임에서 이 클래스 색상의 도색으로 보이는 픽셀 마스크.
+
+    점선 on/off 위상은 지도 값(dash_interval)보다 실제 화면의 색이 훨씬
+    믿을 만하다 — 지도값은 레코드마다 최대 21% 어긋나는 걸 실측으로 확인했다
+    (위 _dash_keep 참고). 그래서 점선은 지도 위상으로 자르지 않고 리본을
+    통으로 그린 다음, 실제로 흰색/황색이 아닌 픽셀만 지운다.
+    """
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    if cls == CLASS_YELLOW:
+        return cv2.inRange(hsv, (15, 90, 90), (38, 255, 255)) > 0
+    return cv2.inRange(hsv, (0, 0, 170), (180, 50, 255)) > 0
+
+
 def render_frame_labels(cam, boundaries, links, row, fallback_z, crosswalks=(),
-                        bonnet=None):
-    """한 프레임의 클래스 맵 (h, w) uint8 을 만든다."""
+                        bonnet=None, frame=None):
+    """한 프레임의 클래스 맵 (h, w) uint8 을 만든다.
+
+    `frame` (원본 카메라 이미지)을 주면 점선 on/off 를 지도의 dash_interval
+    대신 **실제 화면 색상**으로 정한다 — 리본을 실선처럼 통으로 그린 뒤
+    도색처럼 안 보이는 픽셀만 지운다. `frame` 이 없으면(예: 이미지 없이
+    기하만 확인할 때) 예전처럼 지도의 dash_interval 로 자른다.
+    """
     label = np.zeros((cam.height, cam.width), dtype=np.uint8)
     ex, ey = row["pos_x"], row["pos_y"]
     z0 = road_height(links, row.get("link_id", ""), ex, ey, fallback_z)
@@ -538,7 +647,7 @@ def render_frame_labels(cam, boundaries, links, row, fallback_z, crosswalks=(),
         if (xmin - ex > MAX_RANGE or ex - xmax > MAX_RANGE
                 or ymin - ey > MAX_RANGE or ey - ymax > MAX_RANGE):
             continue
-        ego = to_ego(c["points"], ex, ey, row["yaw"], z0)
+        ego = to_ego(c["points"], row, z0)
         if (ego[:, 0] > MAX_RANGE).all():
             continue
         clipped = clip_near(cam.to_camera(ego))
@@ -553,7 +662,7 @@ def render_frame_labels(cam, boundaries, links, row, fallback_z, crosswalks=(),
                 or ymin - ey > MAX_RANGE or ey - ymax > MAX_RANGE):
             continue
 
-        ego = to_ego(b["points"], ex, ey, row["yaw"], z0)
+        ego = to_ego(b["points"], row, z0)
         near = (ego[:, 0] > -5.0) & (np.abs(ego[:, 1]) < MAX_RANGE) & (ego[:, 0] < MAX_RANGE)
         if not near.any():
             continue
@@ -566,6 +675,10 @@ def render_frame_labels(cam, boundaries, links, row, fallback_z, crosswalks=(),
         hw = b["width"] / 2.0
         off = b["lat_offset"]                       # 겹선이면 좌우로 밀어 그린다
 
+        # 점선은 지도의 dash_interval 로 칸을 나눠 그린 다음(정확한 위상은
+        # 못 믿어도 — 레코드마다 최대 21% 어긋난다 — 대략의 on/off 구조는
+        # 준다), 실제 화면에서 도색처럼 안 보이는 픽셀만 지운다.
+        use_paint_trim = b["broken"] and frame is not None
         keep = _dash_keep(b["s"], b["dash_on"], b["dash_off"]) if b["broken"] \
             else np.ones(len(ego), dtype=bool)
 
@@ -589,7 +702,17 @@ def render_frame_labels(cam, boundaries, links, row, fallback_z, crosswalks=(),
                 continue
             quads.append(np.array([uvl[i], uvl[i + 1], uvr[i + 1], uvr[i]],
                                   dtype=np.int32))
-        if quads:
+        if not quads:
+            continue
+
+        if use_paint_trim:
+            # 지도 dash_interval 로 만든 칸을 캔버스에 그린 다음, 실제
+            # 도색처럼 보이는 픽셀만 남긴다.
+            ribbon = np.zeros(label.shape, dtype=np.uint8)
+            cv2.fillPoly(ribbon, quads, 255)
+            painted = _paint_mask(frame, b["cls"]) & (ribbon > 0)
+            label[painted] = b["cls"]
+        else:
             cv2.fillPoly(label, quads, int(b["cls"]))
 
     # 보닛에 가려진 부분은 마지막에 통째로 ignore 로 덮는다.
@@ -719,10 +842,8 @@ def main():
     ap.add_argument("--mgeo", required=True, help="MGeo 폴더 (lane_boundary_set.json 등)")
     ap.add_argument("--cam-set", required=True, help="cam_set.json 경로")
     ap.add_argument("--sensor-id", type=int, default=1, help="카메라 SensorUniqueID (기본 1=전방)")
-    ap.add_argument("--fov-axis", choices=["horizontal", "vertical", "both"],
-                    default="horizontal",
-                    help="cameraFOV 를 수평/수직 중 무엇으로 볼지. 수평으로 확정됐다. "
-                         "카메라를 바꿨을 때만 both 로 다시 확인한다")
+    ap.add_argument("--fov-axis", choices=["horizontal", "vertical", "both"], default="both",
+                    help="cameraFOV 를 수평/수직 중 무엇으로 볼지. both 면 나란히 비교")
     ap.add_argument("--frames", default="0,300,600,900,1200,1500,1800,2100,2400",
                     help="확인할 프레임 인덱스 (쉼표 구분)")
     ap.add_argument("--out", default="label_check", help="결과를 저장할 폴더")
@@ -730,7 +851,18 @@ def main():
                     help="보닛 가림 영역을 찾아 녹화 폴더에 bonnet_mask.png 로 저장한다")
     ap.add_argument("--no-bonnet", action="store_true",
                     help="bonnet_mask.png 가 있어도 무시한다")
+    ap.add_argument("--lat-offset", type=float, default=0.0,
+                    help="라벨을 좌측(+y)으로 미는 보정 (m). 지도-도색 가로 편차를 "
+                         "흡수한다. 녹화본마다 측정해서 넣는다")
+    ap.add_argument("--yaw-offset", type=float, default=0.0,
+                    help="자차 yaw 에 더하는 보정 (도). 편차가 거리에 비례해 변할 때 쓴다")
     args = ap.parse_args()
+
+    global LAT_OFFSET_M, YAW_OFFSET_DEG
+    LAT_OFFSET_M = args.lat_offset
+    YAW_OFFSET_DEG = args.yaw_offset
+    if args.lat_offset or args.yaw_offset:
+        print(f"정합 보정: 가로 {args.lat_offset:+.3f} m, yaw {args.yaw_offset:+.3f} 도")
 
     meta = load_meta(os.path.join(args.recording, "meta.jsonl"))
     source = find_frame_source(args.recording)
@@ -790,7 +922,7 @@ def main():
         panels = []
         for ax in axes:
             label = render_frame_labels(cams[ax], boundaries, links, row, fallback_z,
-                                        crosswalks, bonnet)
+                                        crosswalks, bonnet, frame)
             marked = (label > 0) & (label != CLASS_IGNORE)
             painted = int(marked.sum())
             ratio = painted / label.size * 100
