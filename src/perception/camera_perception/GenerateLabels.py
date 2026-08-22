@@ -8,15 +8,22 @@
 대시 간격(`dash_interval`), 차선폭(`lane_width`)이 전부 들어 있기 때문이다.
 
 --------------------------------------------------------------------------
-지금 이 파일의 목적: 초점거리 확정
+초점거리: FOV 90 은 **수평** — 확정됨
 --------------------------------------------------------------------------
-cam_set.json 의 `cameraFOV` 가 **수평인지 수직인지 적혀 있지 않다.** 90도가
-수평이면 f=640, 수직이면 f=360 으로 1.78배 차이가 나고, 틀리면 라벨이 전부
-어긋난 채로 학습이 "정상적으로" 돌아가 원인을 찾기 어려운 실패가 된다.
+cam_set.json 의 `cameraFOV` 에는 수평인지 수직인지 적혀 있지 않다. 90도가
+수평이면 f=640, 수직이면 f=360 으로 **1.78배** 차이가 난다.
 
-그래서 `--fov-axis both` 로 두 가설을 나란히 렌더링해 **눈으로 고른다.**
-맞는 쪽은 투영선이 영상 속 차선 위에 얹히고, 틀린 쪽은 도로 밖으로 나가거나
-터무니없이 좁게 모인다. 고른 뒤 `--fov-axis` 를 그 값으로 고정해서 쓴다.
+두 가설을 나란히 렌더링해 확정했다 — 수평에서 황색 오버레이가 중앙선에,
+파란 점선이 흰 점선에 정확히 얹힌다. 수직은 눈에 띄게 어긋난다.
+그래서 `--fov-axis` 기본값은 `horizontal` 이다.
+
+**수치 지표로는 이걸 못 가린다.** 두 가설의 `fy/fx` 가 1.333 으로 같아서 지면
+역투영의 가로 좌표 `X ∝ fy/fx` 가 동일하다 — 차로폭이든 가로오차든 같은 숫자가
+나온다. 겹침 비율은 더 나쁘다: 틀린 가설이 투영을 소실점 쪽으로 압축시키는데
+거기가 검출이 조밀한 곳이라 **압축을 보상해버려 틀린 쪽이 이긴다.** 지도의 3D
+좌표를 투영해 픽셀 위치를 보는 것(=오버레이)만이 판별한다.
+
+카메라를 바꾸면 `--fov-axis both` 로 다시 확인할 수 있게 두 가설 모두 남겨 뒀다.
 
 --------------------------------------------------------------------------
 데이터에서 확정한 좌표 관례 (추측하지 말 것)
@@ -712,8 +719,10 @@ def main():
     ap.add_argument("--mgeo", required=True, help="MGeo 폴더 (lane_boundary_set.json 등)")
     ap.add_argument("--cam-set", required=True, help="cam_set.json 경로")
     ap.add_argument("--sensor-id", type=int, default=1, help="카메라 SensorUniqueID (기본 1=전방)")
-    ap.add_argument("--fov-axis", choices=["horizontal", "vertical", "both"], default="both",
-                    help="cameraFOV 를 수평/수직 중 무엇으로 볼지. both 면 나란히 비교")
+    ap.add_argument("--fov-axis", choices=["horizontal", "vertical", "both"],
+                    default="horizontal",
+                    help="cameraFOV 를 수평/수직 중 무엇으로 볼지. 수평으로 확정됐다. "
+                         "카메라를 바꿨을 때만 both 로 다시 확인한다")
     ap.add_argument("--frames", default="0,300,600,900,1200,1500,1800,2100,2400",
                     help="확인할 프레임 인덱스 (쉼표 구분)")
     ap.add_argument("--out", default="label_check", help="결과를 저장할 폴더")
