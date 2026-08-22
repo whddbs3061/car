@@ -59,9 +59,9 @@ CLASS_BG = 0
 CLASS_WHITE_SOLID = 1
 CLASS_WHITE_DASHED = 2
 CLASS_YELLOW = 3
-CLASS_STOPLINE = 4          # surface_marking_set.json 필요 — 아직 확보 못 함
+CLASS_STOPLINE = 4          # lane_type 530 (아래 참고). 별도 파일이 필요 없다
 CLASS_GUIDE = 5             # 유도선 (촘촘한 점선)
-CLASS_ZONE = 6              # 안전지대 등 굵은 노면 도색
+CLASS_ZONE = 6              # 굵은 노면 도색. 지금은 비어 있다 (아래 참고)
 CLASS_CROSSWALK = 7         # 횡단보도
 CLASS_IGNORE = 255          # 가려짐 등 손실에서 제외할 픽셀
 
