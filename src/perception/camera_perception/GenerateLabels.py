@@ -71,6 +71,7 @@ import re
 
 import cv2
 import numpy as np
+from scipy.spatial import cKDTree
 
 
 # --- 클래스 (배경 포함 8채널) ---
@@ -140,15 +141,19 @@ CLASS_COLORS = {
 DOUBLE_PAIR_RADIUS = 0.6
 
 RESAMPLE_STEP = 0.25        # 폴리라인 재보간 간격 (m). 대시 3m 를 12조각으로 나눈다
-MAX_RANGE = 30.0            # 이보다 먼 차선은 버린다.
-# 원래 80m 였다. curve2 idx=416 에서 실측: 급커브(30도/s대) 중 경계선을 거의
-# 접선 방향(비스듬한 각도)으로 오래 보게 되는 구간이 있는데, 그런 시야에서는
+MAX_RANGE = 80.0             # 이보다 먼 차선은 버린다.
+# 한때 30m 로 줄였었다 — curve2 idx=416 에서 실측: 급커브(30도/s대) 중 경계선을
+# 거의 접선 방향(비스듬한 각도)으로 오래 보게 되는 구간이 있는데, 그런 시야에서는
 # 1도 미만의 잔여 오차도 원근 투영상 몇 m 로 증폭된다 (같은 지점을 지나는
 # idx=407/416/423 세 프레임에서 yaw 가 129->156->173도로 바뀌는 동안 407 은
 # 원거리까지 정확했다가 416/423 에서 크게 벌어짐 — 지도나 캘리브레이션 결함이
-# 아니라 원거리+비스듬한 시야각의 기하학적 민감도였다). 30m 로 자르면 이 왜곡
-# 구간이 통째로 없어지고, 어차피 차선 인식에는 근~중거리가 더 중요하다.
+# 아니라 원거리+비스듬한 시야각의 기하학적 민감도였다). 다시 80m 로 되돌렸다 —
+# 먼 거리를 아예 라벨에서 빼는 대신, 저 왜곡은 다른 수단(멀리 갈수록 라벨을
+# 신뢰하지 않거나, 정합 자체를 개선)으로 다뤄야 한다는 판단.
 NEAR_PLANE = 0.5            # 카메라 앞 이 거리보다 가까우면 투영하지 않는다
+
+POSE_DT_MAX = 0.02          # 이보다 큰 pose_dt 프레임은 라벨 생성에서 제외한다
+BRAKE_SKIP_THRESHOLD = 0.05 # 이보다 큰 브레이크 값이면 감속 중으로 보고 제외한다
 
 
 # ======================================================================
@@ -312,34 +317,57 @@ def _point_to_polyline(pt, poly):
     return float(np.sqrt(((pt - proj) ** 2).sum(1)).min())
 
 
+DUPLICATE_RADIUS = 0.05     # 이보다 가까이 완전히 포개지면 겹선이 아니라 중복 기록
+
+
+def _line_overlap_distance(a_pts, b_pts):
+    """두 폴리라인이 처음부터 끝까지 같은 자리에 겹치는지 보려고, 시작·중간·끝
+    3점에서 상대 폴리라인까지의 최단거리 중 최댓값을 돌려준다. 중간점 하나만
+    보면 두 선이 그 지점에서만 스치듯 가까운 경우도 겹선으로 오판할 수 있다.
+    """
+    n = len(a_pts)
+    idxs = (0, n // 2, n - 1)
+    return max(_point_to_polyline(a_pts[k, :2], b_pts) for k in idxs)
+
+
 def _pair_doubles(items):
     """겹선 쌍을 찾아 서로 반대 방향의 가로 오프셋을 준다.
 
     지도는 겹선을 같은 자리의 레코드 2개로 표현하므로, 그대로 그리면 두 번
     덧칠될 뿐 폭이 넓어지지 않는다. 각각을 (폭+간격)/2 만큼 좌우로 밀어야
     실제 겹선의 모양(가운데 빈 틈 포함)이 나온다.
+
+    **단, 두 레코드가 완전히 같은 좌표라면 그건 겹선이 아니라 지도가 같은 선을
+    두 번 기록한 것이다** (실측: B2256W001772/001786 — 노란 실선 하나인데
+    좌표가 정확히 일치하는 레코드가 2개였다). 이런 쌍을 좌우로 벌리면 실제로는
+    없는 두 번째 선(phantom line)이 생긴다. 그래서 거리가 DUPLICATE_RADIUS
+    미만이면 벌리지 않고 한쪽을 그냥 버린다.
     """
     taken = set()
+    duplicates = set()
     pairs = 0
     for i, a in enumerate(items):
-        if i in taken or a["lat_offset"] != 0.0:
+        if i in taken or i in duplicates or a["lat_offset"] != 0.0:
             continue
         best, best_d = None, DOUBLE_PAIR_RADIUS
-        mid = a["points"][len(a["points"]) // 2, :2]
         for j, b in enumerate(items):
-            if j == i or j in taken or b["lane_type"] != a["lane_type"]:
+            if j == i or j in taken or j in duplicates or b["lane_type"] != a["lane_type"]:
                 continue
-            d = _point_to_polyline(mid, b["points"])
+            d = _line_overlap_distance(a["points"], b["points"])
             if d < best_d:
                 best, best_d = j, d
         if best is None:
+            continue
+        if best_d < DUPLICATE_RADIUS:
+            duplicates.add(best)
             continue
         b = items[best]
         h = (a["width"] + a["interval"]) / 2.0
         a["lat_offset"], b["lat_offset"] = -h, +h
         taken.update((i, best))
         pairs += 1
-    return pairs
+    kept = [it for k, it in enumerate(items) if k not in duplicates]
+    return pairs, len(duplicates), kept
 
 
 def load_boundaries(mgeo_dir):
@@ -397,10 +425,11 @@ def load_boundaries(mgeo_dir):
         else:
             out.append(make(shape, 0.0))
 
-    pairs = _pair_doubles(out)
+    pairs, dup_removed, out = _pair_doubles(out)
     if skipped:
         print(f"[경고] 매핑되지 않은 lane_type 을 건너뜀: {dict(skipped)}")
-    print(f"겹선 처리: 같은자리 레코드 쌍 {pairs}쌍, 복합선(한 레코드 두 줄) {split_shapes}개")
+    print(f"겹선 처리: 같은자리 레코드 쌍 {pairs}쌍, 중복 기록 제거 {dup_removed}개, "
+          f"복합선(한 레코드 두 줄) {split_shapes}개")
     return out
 
 
@@ -460,13 +489,65 @@ def load_link_elevation(mgeo_dir):
     return {r["idx"]: np.asarray(r["points"], dtype=np.float64) for r in recs}
 
 
-def road_height(links, link_id, pos_x, pos_y, fallback):
-    """자차가 올라가 있는 링크에서 가장 가까운 점의 z. 못 찾으면 fallback."""
-    pts = links.get(link_id)
-    if pts is None or len(pts) == 0:
+ROAD_PLANE_K = 3   # 로컬 평면을 세울 때 쓰는 최근접점 개수
+
+
+def _fit_local_plane(pts):
+    """점들을 최소자승으로 평면 z = a*x + b*y + c 에 맞춘다.
+
+    점 3개면 그 평면을 정확히 통과한다. 점들이 링크를 따라 거의 일직선으로
+    늘어서 있어 폭 방향(횡방향) 정보가 없을 때도(행렬이 rank-deficient),
+    lstsq 는 SVD로 최소노름 해를 주기 때문에 계수가 터지지 않고 뱅크
+    (횡경사)를 0으로 두는 안전한 근사가 된다 — 3점을 직접 풀 때처럼 값이
+    발산하지 않는다.
+    """
+    A = np.c_[pts[:, 0], pts[:, 1], np.ones(len(pts))]
+    coeffs, *_ = np.linalg.lstsq(A, pts[:, 2], rcond=None)
+    return coeffs
+
+
+def build_link_kdtrees(links):
+    """링크별로 (x,y) KD-tree 를 만들어 둔다.
+
+    지도 전체에 평면 하나를 세우면 커브・경사가 섞인 도로에서 틀어진다.
+    그래서 road_height 가 프레임마다 자차 위치 주변에서 그때그때 로컬
+    평면을 새로 세울 수 있도록 준비해 둔다 — "차량 주변의 로컬 평면을
+    동적으로 여러 개" 만드는 셈이다. 링크 단위로 트리를 나누는 건 다리
+    (overpass) 등 고도가 다른 엉뚱한 링크의 점이 최근접으로 섞여 들어오는
+    걸 막기 위해서다 (원래도 "자차가 올라간 링크"로 한정해서 찾았다).
+    """
+    trees = {}
+    for link_id, pts in links.items():
+        if len(pts) == 0:
+            continue
+        tree = cKDTree(pts[:, :2]) if len(pts) >= 2 else None
+        trees[link_id] = (tree, pts)
+    return trees
+
+
+def road_height(link_trees, link_id, pos_x, pos_y, fallback, k=ROAD_PLANE_K):
+    """자차 주변 k개 최근접점으로 로컬 평면을 세우고 그 위의 z 를 노면
+    높이로 쓴다.
+
+    점 하나만 쓰던 예전 방식은 점과 점 사이 경계에서 값이 계단식으로
+    뛰었다. 로컬 평면은 그 사이를 매끄럽게 보간하고, 점이 충분히 퍼져
+    있으면(교차로・커브 부근) 도로 뱅크(횡경사)까지 반영한다.
+    """
+    entry = link_trees.get(link_id)
+    if entry is None:
         return fallback
-    d = (pts[:, 0] - pos_x) ** 2 + (pts[:, 1] - pos_y) ** 2
-    return float(pts[int(np.argmin(d)), 2])
+    tree, pts = entry
+    if tree is None:
+        return float(pts[0, 2]) if len(pts) else fallback
+
+    kk = min(k, len(pts))
+    _, idx = tree.query([pos_x, pos_y], k=kk)
+    idx = np.atleast_1d(idx)
+    if kk < 3:
+        return float(pts[idx[0], 2])
+
+    a, b, c = _fit_local_plane(pts[idx])
+    return float(a * pos_x + b * pos_y + c)
 
 
 # ======================================================================
@@ -628,7 +709,7 @@ def _paint_mask(frame, cls):
     return cv2.inRange(hsv, (0, 0, 170), (180, 50, 255)) > 0
 
 
-def render_frame_labels(cam, boundaries, links, row, fallback_z, crosswalks=(),
+def render_frame_labels(cam, boundaries, link_trees, row, fallback_z, crosswalks=(),
                         bonnet=None, frame=None):
     """한 프레임의 클래스 맵 (h, w) uint8 을 만든다.
 
@@ -639,7 +720,7 @@ def render_frame_labels(cam, boundaries, links, row, fallback_z, crosswalks=(),
     """
     label = np.zeros((cam.height, cam.width), dtype=np.uint8)
     ex, ey = row["pos_x"], row["pos_y"]
-    z0 = road_height(links, row.get("link_id", ""), ex, ey, fallback_z)
+    z0 = road_height(link_trees, row.get("link_id", ""), ex, ey, fallback_z)
 
     # 횡단보도를 먼저 깔고 그 위에 차선을 그린다. 겹치면 선이 이긴다.
     for c in crosswalks:
@@ -675,12 +756,20 @@ def render_frame_labels(cam, boundaries, links, row, fallback_z, crosswalks=(),
         hw = b["width"] / 2.0
         off = b["lat_offset"]                       # 겹선이면 좌우로 밀어 그린다
 
-        # 점선은 지도의 dash_interval 로 칸을 나눠 그린 다음(정확한 위상은
-        # 못 믿어도 — 레코드마다 최대 21% 어긋난다 — 대략의 on/off 구조는
-        # 준다), 실제 화면에서 도색처럼 안 보이는 픽셀만 지운다.
+        # frame 이 있으면 지도의 dash_interval 을 아예 믿지 않는다 — 레코드마다
+        # 최대 21% 어긋나는 걸 실측으로 확인했다 (_dash_keep 참고). 그래서 리본을
+        # 통으로(keep=all True) 그린 뒤 _paint_mask 로 실제 도색 색이 아닌 픽셀만
+        # 지운다. 여기서 지도 위상으로 먼저 잘라버리면 그 위에 페인트 마스크가
+        # 또 깎아내는 이중 필터링이 되어, 유도선처럼 dash 간격이 촘촘한
+        # (0.75/0.75, 0.5/0.5) 클래스는 거의 다 사라진다 — frame 없이 기하만 볼
+        # 때만 지도 위상으로 대략의 on/off 구조를 준다.
         use_paint_trim = b["broken"] and frame is not None
-        keep = _dash_keep(b["s"], b["dash_on"], b["dash_off"]) if b["broken"] \
-            else np.ones(len(ego), dtype=bool)
+        if use_paint_trim:
+            keep = np.ones(len(ego), dtype=bool)
+        elif b["broken"]:
+            keep = _dash_keep(b["s"], b["dash_on"], b["dash_off"])
+        else:
+            keep = np.ones(len(ego), dtype=bool)
 
         left = ego[:, :3].copy()
         right = ego[:, :3].copy()
@@ -886,6 +975,7 @@ def main():
     boundaries = load_boundaries(args.mgeo)
     crosswalks = load_crosswalks(args.mgeo)
     links = load_link_elevation(args.mgeo)
+    link_trees = build_link_kdtrees(links)
     fallback_z = float(np.median([b["points"][:, 2].mean() for b in boundaries]))
 
     print("=" * 62)
@@ -897,6 +987,35 @@ def main():
 
     indices = [int(x) for x in args.frames.split(",") if x.strip()]
     indices = [i for i in indices if i < len(meta)]
+
+    # pose_extrapolated 가 붙은 프레임은 카메라 촬영 시각을 상태 이력으로 보간하지
+    # 못해 "가장 가까운 값"을 대신 쓴 것이다 — 실제 촬영 시점의 자차 위치/자세와
+    # 다를 수 있어 라벨이 크게 어긋난다(실측: lap4_full idx=188, 교차로에서
+    # 크게 틀어짐). 라벨 생성에는 못 믿을 프레임이라 걸러낸다.
+    extrapolated = [i for i in indices if meta[i].get("pose_extrapolated") is not None]
+    if extrapolated:
+        indices = [i for i in indices if i not in extrapolated]
+        print(f"[경고] pose_extrapolated 프레임 {len(extrapolated)}개 건너뜀: {extrapolated}")
+
+    # pose_dt(보간에 쓴 두 상태 샘플 사이 간격)가 크면 그 구간 안에서 등속·등각속도
+    # 가정이 깨지기 쉽다 — 회전 중 실측으로 pose_dt 가 커지는 걸 확인했다(11sunny1:
+    # 회전 구간 중앙값이 직선의 거의 2배). 임계값을 넘는 프레임은 못 믿고 버린다.
+    high_dt = [i for i in indices
+               if (meta[i].get("pose_dt") or 0.0) > POSE_DT_MAX]
+    if high_dt:
+        indices = [i for i in indices if i not in high_dt]
+        print(f"[경고] pose_dt > {POSE_DT_MAX}s 프레임 {len(high_dt)}개 건너뜀: {high_dt}")
+
+    # 브레이크를 밟는 중이면(감속 중) 보간 구간 안에서 속도가 빠르게 바뀌어
+    # 위치 보간(등속 가정)이 틀어진다 — 정지선/차선이 실제보다 자차 쪽으로
+    # 당겨져 보이는 증상이 이것으로 확인됐다(lap4_full idx=184). 브레이크가
+    # 걸려 있는 프레임은 걸러낸다.
+    braking = [i for i in indices
+               if (meta[i].get("brake") or 0.0) > BRAKE_SKIP_THRESHOLD]
+    if braking:
+        indices = [i for i in indices if i not in braking]
+        print(f"[경고] 브레이크 작동 중 프레임 {len(braking)}개 건너뜀: {braking}")
+
     frames = read_frames(source, indices)
     if not frames:
         raise SystemExit("프레임을 읽지 못했습니다.")
@@ -921,7 +1040,7 @@ def main():
         frame, row = frames[idx], meta[idx]
         panels = []
         for ax in axes:
-            label = render_frame_labels(cams[ax], boundaries, links, row, fallback_z,
+            label = render_frame_labels(cams[ax], boundaries, link_trees, row, fallback_z,
                                         crosswalks, bonnet, frame)
             marked = (label > 0) & (label != CLASS_IGNORE)
             painted = int(marked.sum())
