@@ -1,0 +1,8 @@
+# 확인용 오버레이 — 눈으로 보려고 만든 것이라 학습에 쓰지 않는다.
+# 원본보다 용량이 커서 저장소에는 올리지 않는다 (GenerateLabels.py 로 언제든 재생성).
+label_check/
+mask_check/
+laneid_check/
+occlusion_check/
+stopline_check/
+offset_sweep/
