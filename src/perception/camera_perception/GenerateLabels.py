@@ -92,6 +92,40 @@ CLASS_NAMES = {
     CLASS_ZONE: "zone", CLASS_CROSSWALK: "crosswalk",
 }
 
+# --- 학습용 5클래스 리맵 ---
+# 내부 표현은 8클래스 그대로 두고(정보 손실 없는 원본 유지), 저장/출력할 때만
+# 합친다. 1차 학습은 {배경, 백색실선, 백색점선, 황색, 정지선} 5종만 쓴다.
+# 유도선·안전지대·횡단보도는 1차 대상이 아니지만 **배경으로 두면 안 된다** —
+# 크고 선명한 도색을 "아무것도 아니다"라고 가르치게 되므로 ignore 로 뺀다.
+TRAIN_CLASS_MAPS = {
+    "lane5": {
+        CLASS_BG: 0,
+        CLASS_WHITE_SOLID: 1,
+        CLASS_WHITE_DASHED: 2,
+        CLASS_YELLOW: 3,
+        CLASS_STOPLINE: 4,
+        CLASS_GUIDE: CLASS_IGNORE,
+        CLASS_ZONE: CLASS_IGNORE,
+        CLASS_CROSSWALK: CLASS_IGNORE,
+        CLASS_IGNORE: CLASS_IGNORE,
+    },
+}
+TRAIN_CLASS_NAMES = {
+    "lane5": {0: "background", 1: "white_solid", 2: "white_dashed",
+              3: "yellow", 4: "stopline"},
+}
+
+
+def remap_classes(label, scheme):
+    """8클래스 라벨을 학습용 스킴으로 합친다. scheme 이 None 이면 그대로."""
+    if not scheme:
+        return label
+    table = TRAIN_CLASS_MAPS[scheme]
+    out = np.full_like(label, CLASS_IGNORE)
+    for src, dst in table.items():
+        out[label == src] = dst
+    return out
+
 # NGII lane_type → 클래스. 지도 1245개를 실측해 정한 값이다.
 #   505(485개) solid/white  폭 0.15  길이중앙 18.8m — 길가장자리
 #   501(248개) solid/yellow 폭 0.15  길이중앙 18.4m — 중앙선
@@ -141,19 +175,113 @@ CLASS_COLORS = {
 DOUBLE_PAIR_RADIUS = 0.6
 
 RESAMPLE_STEP = 0.25        # 폴리라인 재보간 간격 (m). 대시 3m 를 12조각으로 나눈다
-MAX_RANGE = 80.0             # 이보다 먼 차선은 버린다.
-# 한때 30m 로 줄였었다 — curve2 idx=416 에서 실측: 급커브(30도/s대) 중 경계선을
-# 거의 접선 방향(비스듬한 각도)으로 오래 보게 되는 구간이 있는데, 그런 시야에서는
-# 1도 미만의 잔여 오차도 원근 투영상 몇 m 로 증폭된다 (같은 지점을 지나는
-# idx=407/416/423 세 프레임에서 yaw 가 129->156->173도로 바뀌는 동안 407 은
-# 원거리까지 정확했다가 416/423 에서 크게 벌어짐 — 지도나 캘리브레이션 결함이
-# 아니라 원거리+비스듬한 시야각의 기하학적 민감도였다). 다시 80m 로 되돌렸다 —
-# 먼 거리를 아예 라벨에서 빼는 대신, 저 왜곡은 다른 수단(멀리 갈수록 라벨을
-# 신뢰하지 않거나, 정합 자체를 개선)으로 다뤄야 한다는 판단.
+MAX_RANGE = 40.0             # 이보다 먼 차선은 버린다.
+# 40m 로 정한 근거 (2026-08-27, 1_2stage_test1 실측):
+# 1. **해상도** — 차선폭 0.15m 가 화면에서 차지하는 폭은 fx*0.15/거리 다.
+#    30m 3.2px / 40m 2.4px / 50m 1.9px / 80m 1.2px. 50m만 가도 2px 미만이라
+#    모델이 분해할 수 없고, 실제 렌더링된 도색은 안티앨리어싱된 흐릿한 자국인데
+#    라벨은 딱딱한 1px 선이라 학습에 노이즈만 된다.
+# 2. **분포가 40m 에서 꺾인다** — 화면에 찍히는 라벨 픽셀을 ego 전방거리로
+#    나눠 보면 0-10m 68.0% / 10-20m 14.8% / 20-30m 4.1% / 30-40m 1.7% 로
+#    줄다가 40-50m 2.6% / 50-60m 2.9% / 60-80m 5.9% 로 **다시 늘어난다**.
+#    정상 원근이면 계속 줄어야 하는데 늘어난다는 건, 그 거리대에 멀리서 옆으로
+#    보이는 다른 도로가 화면 가로를 채우고 있다는 뜻이다 (실측: 60m 이상 라벨의
+#    프레임당 가로 폭 중앙값 1244px, 세로 폭 52px — 지평선의 가로 띠).
+#    40m 컷은 이 왜곡 구간을 통째로 잘라낸다 (전체 라벨의 11.4%).
+# 값이 30 → 80 → 40 으로 바뀐 이력이 있으니 다시 건드리기 전에 읽을 것:
+#  - 처음 30m 로 줄였던 건 curve2 idx=416 의 급커브 왜곡 때문이었다(경계선을 거의
+#    접선 방향으로 보는 시야에서는 1도 미만 오차도 원근상 몇 m 로 증폭). 하지만
+#    그건 원인을 고치지 않고 증상을 가리는 처방이었다.
+#  - 그래서 80m 로 되돌렸고, 그 뒤 진짜 원인(카메라 파이프라인 지연 0.090s)을
+#    찾아 고쳤다 — CAMERA_PIPELINE_LATENCY 참고. 급커브 왜곡은 그걸로 해결됐다.
+#  - 지금의 40m 는 그 왜곡 회피가 아니라 위의 해상도·분포 근거로 정한 값이다.
 NEAR_PLANE = 0.5            # 카메라 앞 이 거리보다 가까우면 투영하지 않는다
 
-POSE_DT_MAX = 0.02          # 이보다 큰 pose_dt 프레임은 라벨 생성에서 제외한다
+# pose_dt 는 "보간에 쓴 두 샘플 사이 간격"이 아니라 "아래쪽 샘플로부터의 거리"라서
+# 정상 프레임도 [0, 상태 샘플 간격] 안에서 골고루 흩어진다 (상태 스트림 실측 ~12Hz,
+# 간격 0.085s). 예전 값 0.02 는 카메라 지연 보정 전 test2 에서 t_cam 이 우연히 상태
+# 샘플 바로 뒤에 떨어져 pose_dt 가 작게 나오던 것을 보고 정한 값이라, 보정 후
+# 위상이 바뀌자 멀쩡한 프레임의 66% 를 버렸다. 샘플 간격을 넘는 값만 실제로
+# 상태 패킷이 유실된 구간이므로 그 언저리로 둔다.
+POSE_DT_MAX = 0.09          # 이보다 큰 pose_dt 프레임은 라벨 생성에서 제외한다
 BRAKE_SKIP_THRESHOLD = 0.05 # 이보다 큰 브레이크 값이면 감속 중으로 보고 제외한다
+
+# 카메라 파이프라인 지연 (초). RecordDrive.CAMERA_PIPELINE_LATENCY 와 같은 값이다.
+# 카메라 타임스탬프는 장면이 렌더된 시각이 아니라 패킷을 내보낸 시각에 가까워서,
+# 이미지 내용이 자기 타임스탬프보다 이만큼 과거다. meta.jsonl 에 `cam_latency` 가
+# 없는 (= 보정 전에 녹화된) 녹화본은 여기서 되돌려 준다.
+#
+# 실측(test2, 회전 프레임 15장): 최적 오프셋 중앙값 -0.090s, 표준편차 0.022s.
+# 좌회전과 우회전이 **똑같이** 음수 오프셋을 필요로 한다 — yaw 바이어스라면
+# 좌/우 부호가 반대여야 하므로 각도 오차가 아니라 고정 지연이다.
+CAMERA_PIPELINE_LATENCY = 0.090
+
+# 차선 ID 를 매길 범위. 교차로에서는 다른 방향 도로의 경계가 화면에 잔뜩
+# 들어오므로(실측: 한 프레임 70개, 횡방향 60m 밖까지) 자차 주변을 실제로
+# 지나가는 것만 번호를 준다. 3.4m 차로 기준 ±12m 면 좌우 3차로 정도가 들어온다.
+LANE_ID_MAX_LAT = 12.0      # 자차 기준 횡방향 (m)
+LANE_ID_MAX_DIST = 40.0     # 최근접점까지의 거리 (m)
+
+# 파생물에서 잘라낼 위쪽(하늘) 픽셀 수. 원본 프레임은 자르지 않는다
+# — CameraModel.cropped 참고.
+#
+# 1_2stage_test1 507장 전수 조사에서 라벨이 나타나는 최상단이 원본 y=322
+# (1퍼센타일 346, 중앙값 360) 이라 260 이면 62px 여유가 남고 잘리는 라벨은 없다.
+# 평지 지평선은 y≈382 인데 오르막 구간에서 라벨이 그보다 위로 올라오는 것까지
+# 감안한 값이다.
+#
+# 참고로 ROI/Sensor/LaneCandidates.py 의 사다리꼴 ROI 윗변을 1280x720 으로
+# 환산하면 y=252 다. 전혀 다른 근거(후처리 지평선 가드)로 정해진 값인데 비슷한
+# 자리라 세로 컷 위치의 교차검증이 된다. 다만 그 사다리꼴의 좌우 빗변은 쓰면
+# 안 된다 — 화면 가장자리의 **근거리** 차선을 7.5% 잘라낸다.
+CROP_TOP = 260
+
+# 자차 기준 이 횡거리를 넘는 경계는 라벨에서 뺀다. 반대편 차도를 자동으로
+# 걸러내려고 한때 12.0 을 썼지만(실측: "라벨인데 실제 도색이 아닌" 픽셀이
+# 26.7% → 19.7%), 자동 판정이 부정확해 멀쩡한 경계까지 잘려나갔다. 지금은
+# 끄고(전부 표시) 어느 경계를 뺄지는 `--exclude-file` 로 사람이 고른다.
+LABEL_MAX_LAT = float("inf")
+
+# 사람이 직접 제외한 지도 경계 레코드 idx (예: 반대편 차도). EditLabels.py 로
+# 화면에서 선을 클릭해 고르고 label_exclude.json 에 저장한다. **지도 레코드
+# 단위라 한 번 빼면 그 레코드가 나오는 모든 프레임에서 빠진다** — 반대편 차도는
+# 어느 프레임에서나 같은 레코드이므로 프레임마다 지울 필요가 없다.
+EXCLUDED_BOUNDARIES = set()
+# 사람이 통째로 뺀 프레임 번호. 라벨이 못 쓸 만큼 어긋났거나 장면 자체가
+# 학습에 부적합할 때 EditLabels.py 에서 프레임 단위로 뺀다.
+EXCLUDED_FRAMES = set()
+EXCLUDE_FILENAME = "label_exclude.json"
+# **경계 제외는 녹화본이 아니라 지도에 딸린 정보다.** 반대편 차도 차선은 어느
+# 바퀴를 돌아도 같은 지도 레코드라, 한 번 빼면 앞으로 찍는 모든 녹화본에서
+# 빠져야 한다. 그래서 이 파일만 스크립트 폴더에 두고 전 녹화본이 공유한다.
+# (프레임 제외는 그 녹화본에만 해당하므로 녹화 폴더의 EXCLUDE_FILENAME 에 남는다.)
+GLOBAL_EXCLUDE_FILENAME = "lane_exclude_global.json"
+
+
+def global_exclude_path():
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        GLOBAL_EXCLUDE_FILENAME)
+
+
+def _read_exclude(path):
+    if not path or not os.path.isfile(path):
+        return set(), set()
+    with open(path, encoding="utf-8") as fp:
+        data = json.load(fp)
+    if not isinstance(data, dict):          # 예전 형식(리스트만)
+        return set(data), set()
+    return set(data.get("excluded", [])), set(int(i) for i in data.get("excluded_frames", []))
+
+
+def load_exclusions(path):
+    """제외 목록을 읽는다. (경계 idx 집합, 프레임 번호 집합).
+
+    경계는 전역 파일 + 녹화 폴더 파일을 합친다 — 예전에 녹화 폴더에만
+    저장해 둔 것도 계속 살아 있게 하려는 것이다.
+    """
+    g_b, _ = _read_exclude(global_exclude_path())
+    l_b, l_f = _read_exclude(path)
+    return g_b | l_b, l_f
 
 
 # ======================================================================
@@ -199,6 +327,28 @@ class CameraModel:
 
         self.mount_pos = np.asarray(mount_pos, dtype=np.float64)   # 자차 기준 (x,y,z)
         self.roll, self.pitch, self.yaw = (math.radians(a) for a in mount_rot)
+        self.crop_top = 0
+
+    def cropped(self, top):
+        """위쪽 `top` 행을 잘라낸 카메라. **주점 cy 가 같이 따라와야 한다.**
+
+        하늘 영역은 라벨이 절대 나오지 않는다(실측: 56프레임에서 라벨 최상단
+        v=288, 5퍼센타일 338). 잘라내면 픽셀 수가 줄어 학습·추론이 가벼워지고
+        하늘 클러터도 사라진다. 다만 자르면 이미지 원점이 바뀌므로 cy 를 그만큼
+        올려주지 않으면 투영이 통째로 세로로 어긋난다 — 라벨 생성·학습·추론
+        어느 한 곳이라도 이 값이 안 맞으면 바로 틀어진다.
+
+        **원본 프레임은 자르지 않는다.** 녹화본은 팀 공용이라 그대로 두고,
+        여기서 만드는 파생물(마스크·구조화 라벨·오버레이)에만 적용한다.
+        학습 쪽이 같은 값으로 자를 수 있도록 구조화 라벨에 `crop_top` 을 남긴다.
+        """
+        if not top:
+            return self
+        out = self.scaled(self.width, self.height)
+        out.height = self.height - int(top)
+        out.cy = self.cy - int(top)
+        out.crop_top = int(top)
+        return out
 
     def scaled(self, width, height):
         """같은 센서를 다른 저장 해상도로. 비등방이어도 정확하다."""
@@ -317,7 +467,6 @@ def _point_to_polyline(pt, poly):
     return float(np.sqrt(((pt - proj) ** 2).sum(1)).min())
 
 
-DUPLICATE_RADIUS = 0.05     # 이보다 가까이 완전히 포개지면 겹선이 아니라 중복 기록
 
 
 def _line_overlap_distance(a_pts, b_pts):
@@ -337,37 +486,34 @@ def _pair_doubles(items):
     덧칠될 뿐 폭이 넓어지지 않는다. 각각을 (폭+간격)/2 만큼 좌우로 밀어야
     실제 겹선의 모양(가운데 빈 틈 포함)이 나온다.
 
-    **단, 두 레코드가 완전히 같은 좌표라면 그건 겹선이 아니라 지도가 같은 선을
-    두 번 기록한 것이다** (실측: B2256W001772/001786 — 노란 실선 하나인데
-    좌표가 정확히 일치하는 레코드가 2개였다). 이런 쌍을 좌우로 벌리면 실제로는
-    없는 두 번째 선(phantom line)이 생긴다. 그래서 거리가 DUPLICATE_RADIUS
-    미만이면 벌리지 않고 한쪽을 그냥 버린다.
+    좌표가 완전히 일치하는 쌍도 **벌려서 두 줄로 그린다.** 한때 그런 쌍을
+    "지도가 같은 선을 두 번 기록한 것"으로 보고 한쪽을 버렸는데(계기:
+    B2256W001772/001786 을 벌렸더니 실제로 없는 두 번째 선이 생김) 그 판정이
+    너무 거칠었다 — K-City 맵에서 75개가 지워졌고 그중 다수가 **진짜 황색
+    중앙 겹선**이었다. 15foggy0 idx=63 에서 실제 도로엔 황색 2줄인데 라벨이
+    1줄만 나오는 것으로 확인했다. 겹선을 살리는 쪽이 맞고, 유령선이 생기는
+    개별 레코드는 EditLabels.py 로 빼는 게 낫다.
     """
     taken = set()
-    duplicates = set()
     pairs = 0
     for i, a in enumerate(items):
-        if i in taken or i in duplicates or a["lat_offset"] != 0.0:
+        if i in taken or a["lat_offset"] != 0.0:
             continue
         best, best_d = None, DOUBLE_PAIR_RADIUS
         for j, b in enumerate(items):
-            if j == i or j in taken or j in duplicates or b["lane_type"] != a["lane_type"]:
+            if j == i or j in taken or b["lane_type"] != a["lane_type"]:
                 continue
             d = _line_overlap_distance(a["points"], b["points"])
             if d < best_d:
                 best, best_d = j, d
         if best is None:
             continue
-        if best_d < DUPLICATE_RADIUS:
-            duplicates.add(best)
-            continue
         b = items[best]
         h = (a["width"] + a["interval"]) / 2.0
         a["lat_offset"], b["lat_offset"] = -h, +h
         taken.update((i, best))
         pairs += 1
-    kept = [it for k, it in enumerate(items) if k not in duplicates]
-    return pairs, len(duplicates), kept
+    return pairs
 
 
 def load_boundaries(mgeo_dir):
@@ -418,17 +564,24 @@ def load_boundaries(mgeo_dir):
         if len(words) == 2:
             # 'solid broken' 처럼 한 레코드가 겹선 두 줄을 나타낸다 (type 506, 9개).
             # 한쪽만 실선인 복합선이라 통째로 실선 처리하면 절반이 틀린 라벨이 된다.
+            #
+            # **lane_shape 의 순서는 폴리라인 진행방향 기준 좌→우다.**
+            # off 는 좌측 법선 방향이므로 words[0] 이 +h(좌), words[1] 이 -h(우).
+            # 예전에는 반대로 넣어 실선과 점선의 좌우가 통째로 뒤바뀌어 있었다
+            # (1_2stage_test1 idx=3125 의 B2256W000038 'solid broken' 에서 확인:
+            #  solid 라벨이 붙은 쪽의 실제 도색 연속률이 45.9%, broken 라벨이
+            #  붙은 쪽이 100% 로 정확히 뒤집혀 있었다).
             h = (width + interval) / 2.0
-            out.append(make(words[0], -h))
-            out.append(make(words[1], +h))
+            out.append(make(words[0], +h))
+            out.append(make(words[1], -h))
             split_shapes += 1
         else:
             out.append(make(shape, 0.0))
 
-    pairs, dup_removed, out = _pair_doubles(out)
+    pairs = _pair_doubles(out)
     if skipped:
         print(f"[경고] 매핑되지 않은 lane_type 을 건너뜀: {dict(skipped)}")
-    print(f"겹선 처리: 같은자리 레코드 쌍 {pairs}쌍, 중복 기록 제거 {dup_removed}개, "
+    print(f"겹선 처리: 같은자리 레코드 쌍 {pairs}쌍, "
           f"복합선(한 레코드 두 줄) {split_shapes}개")
     return out
 
@@ -709,14 +862,68 @@ def _paint_mask(frame, cls):
     return cv2.inRange(hsv, (0, 0, 170), (180, 50, 255)) > 0
 
 
+def assign_lane_ids(vectors):
+    """자차 기준 횡방향 오프셋으로 정렬해 상대 차선 ID 를 붙인다.
+
+    ego 좌우 2개로 한정하지 않는다 — 화면에 보이는 모든 경계에 순번을 매겨야
+    인접 차로 경계까지 식별되고, "이 선들이 서로 다른 선이다"라는 정보 자체가
+    라벨에 들어간다. 자차 좌표계는 y 가 좌측(+)이므로:
+
+        ego_left   가장 가까운 좌측 경계 (y > 0 중 최소)
+        left_2     그 바깥쪽 … left_3 …
+        ego_right  가장 가까운 우측 경계 (y < 0 중 |y| 최소)
+        right_2    그 바깥쪽 …
+
+    정지선은 진행방향에 직각이라 좌/우 개념이 없다 — 별도로 `stopline_N`.
+
+    **자차 주변을 실제로 지나가는 경계만 번호를 받는다.** 교차로에서는 다른
+    방향 도로의 경계가 화면에 잔뜩 들어오는데(실측: 한 프레임에 70개, 횡방향
+    60m 밖까지) 그것까지 순번을 매기면 `left_32` 같은 무의미한 ID 가 생기고
+    진짜 인접 차로 번호가 밀린다. 범위 밖 경계는 `lane_id=None` 으로 두되
+    구조화 라벨에는 그대로 남긴다 — 나중에 다른 용도로 쓸 수 있으므로.
+    """
+    def near(v):
+        return (abs(v["ego_lat_m"]) <= LANE_ID_MAX_LAT
+                and v.get("ego_dist_m", 0.0) <= LANE_ID_MAX_DIST)
+
+    for v in vectors:
+        v["lane_id"] = None
+        v["lane_index"] = None
+
+    left = sorted((v for v in vectors
+                   if near(v) and v["ego_lat_m"] > 0 and v["cls"] != CLASS_STOPLINE),
+                  key=lambda v: v["ego_lat_m"])
+    right = sorted((v for v in vectors
+                    if near(v) and v["ego_lat_m"] <= 0 and v["cls"] != CLASS_STOPLINE),
+                   key=lambda v: -v["ego_lat_m"])
+    stop = sorted((v for v in vectors
+                   if near(v) and v["cls"] == CLASS_STOPLINE),
+                  key=lambda v: v["ego_fwd_m"])
+
+    for k, v in enumerate(left):
+        v["lane_id"] = "ego_left" if k == 0 else f"left_{k + 1}"
+        v["lane_index"] = -(k + 1)
+    for k, v in enumerate(right):
+        v["lane_id"] = "ego_right" if k == 0 else f"right_{k + 1}"
+        v["lane_index"] = k + 1
+    for k, v in enumerate(stop):
+        v["lane_id"] = f"stopline_{k + 1}"
+        v["lane_index"] = None
+    return vectors
+
+
 def render_frame_labels(cam, boundaries, link_trees, row, fallback_z, crosswalks=(),
-                        bonnet=None, frame=None):
+                        bonnet=None, frame=None, vectors=None):
     """한 프레임의 클래스 맵 (h, w) uint8 을 만든다.
 
     `frame` (원본 카메라 이미지)을 주면 점선 on/off 를 지도의 dash_interval
     대신 **실제 화면 색상**으로 정한다 — 리본을 실선처럼 통으로 그린 뒤
     도색처럼 안 보이는 픽셀만 지운다. `frame` 이 없으면(예: 이미지 없이
     기하만 확인할 때) 예전처럼 지도의 dash_interval 로 자른다.
+
+    `vectors` 에 리스트를 주면 래스터에 굽기 전의 폴리라인(구조화 라벨)을
+    거기에 채워 준다. 차선 ID 는 프레임 전체를 모은 뒤 `assign_lane_ids` 로
+    붙인다.
     """
     label = np.zeros((cam.height, cam.width), dtype=np.uint8)
     ex, ey = row["pos_x"], row["pos_y"]
@@ -784,6 +991,7 @@ def render_frame_labels(cam, boundaries, link_trees, row, fallback_z, crosswalks
         uvr, vr = cam.project(right)
 
         quads = []
+        centers = []            # 구조화 라벨용: 리본 중심선의 이미지 좌표
         for i in range(len(ego) - 1):
             if not (keep[i] and keep[i + 1] and near[i] and near[i + 1]):
                 continue
@@ -791,8 +999,51 @@ def render_frame_labels(cam, boundaries, link_trees, row, fallback_z, crosswalks
                 continue
             quads.append(np.array([uvl[i], uvl[i + 1], uvr[i + 1], uvr[i]],
                                   dtype=np.int32))
+            centers.append(((uvl[i] + uvr[i]) / 2.0, i))
         if not quads:
             continue
+
+        # 리본의 실제 중심선. ego 원본이 아니라 lat_offset 을 반영해야
+        # 겹선·복합선의 두 줄이 서로 다른 횡위치로 구분된다.
+        rows_ = np.array([i for _, i in centers])
+        cen = ego[:, :2].copy()
+        cen[:-1, 0] += nx * off
+        cen[:-1, 1] += ny * off
+        cen[-1] = cen[-2]
+        sub = cen[rows_]
+        # **기준점은 "최소 전방거리"가 아니라 "자차와의 최근접점"이어야 한다.**
+        # 전방거리만 보면 70m 앞에서 시작하는 먼 도로의 경계가 그 지점의
+        # 횡오프셋으로 번호를 받아버려, 차로 순번이 뒤죽박죽이 된다.
+        fwd_ok = sub[:, 0] > 0.0
+        pool = np.where(fwd_ok)[0] if fwd_ok.any() else np.arange(len(sub))
+        ref = int(pool[np.argmin((sub[pool] ** 2).sum(axis=1))])
+
+        # 자차 도로 밖(반대편 차도 등)은 라벨에 넣지 않는다.
+        if abs(float(sub[ref, 1])) > LABEL_MAX_LAT:
+            continue
+        # 사람이 직접 뺀 경계 (EditLabels.py 로 고른다). 지도 레코드 단위라
+        # 한 번 빼면 그 레코드가 보이는 **모든 프레임**에서 빠진다.
+        if b["idx"] in EXCLUDED_BOUNDARIES:
+            continue
+
+        # 픽셀 래스터만으로는 나중에 차선 ID 를 복원할 수 없다 — 같은 클래스의
+        # 여러 경계가 한 캔버스에 섞여 그려지기 때문이다. 그래서 굽기 전에
+        # 폴리라인을 따로 모아 둔다. 차선 ID(상대 순번)는 프레임 전체를 모은 뒤
+        # 자차 기준 횡방향 오프셋으로 정렬해서 붙인다.
+        if vectors is not None and centers:
+            vectors.append({
+                "map_idx": b["idx"],
+                "cls": int(b["cls"]),
+                "cls_name": CLASS_NAMES.get(b["cls"], "unknown"),
+                "broken": bool(b["broken"]),
+                "lane_type": int(b["lane_type"]),
+                "width_m": round(float(b["width"]), 3),
+                "ego_lat_m": round(float(sub[ref, 1]), 3),
+                "ego_fwd_m": round(float(sub[ref, 0]), 3),
+                "ego_dist_m": round(float(np.hypot(*sub[ref])), 3),
+                "points_uv": [[round(float(u), 1), round(float(v), 1)]
+                              for (u, v), _ in centers],
+            })
 
         if use_paint_trim:
             # 지도 dash_interval 로 만든 칸을 캔버스에 그린 다음, 실제
@@ -837,6 +1088,75 @@ def _label_bar(img, text, color=(255, 255, 255)):
 def load_meta(path):
     with open(path, encoding="utf-8") as fp:
         return [json.loads(line) for line in fp if line.strip()]
+
+
+# ======================================================================
+# 카메라 지연 보정 (예전 녹화본용)
+# ======================================================================
+def _unwrap_deg(vals):
+    """각도 배열의 ±180 점프를 펴서 보간이 가능하게 만든다."""
+    out = [vals[0]]
+    for v in vals[1:]:
+        out.append(out[-1] + ((v - out[-1] + 180.0) % 360.0) - 180.0)
+    return np.asarray(out)
+
+
+def build_pose_timeline(meta):
+    """meta.jsonl 의 (카메라 시각, pose) 를 보간 가능한 배열로 모은다."""
+    ok = all(k in meta[0] for k in ("cam_sec", "pos_x", "yaw"))
+    if not ok:
+        return None
+    return {
+        "t": np.array([r["cam_sec"] + r["cam_nsec"] * 1e-9 for r in meta]),
+        "pos_x": np.array([r["pos_x"] for r in meta]),
+        "pos_y": np.array([r["pos_y"] for r in meta]),
+        "pos_z": np.array([r.get("pos_z", 0.0) for r in meta]),
+        "yaw": _unwrap_deg([_wrap180(r["yaw"]) for r in meta]),
+        "pitch": np.array([_wrap180(r.get("pitch", 0.0)) for r in meta]),
+        "roll": np.array([_wrap180(r.get("roll", 0.0)) for r in meta]),
+        "vel": np.array([r.get("signed_vel") or 0.0 for r in meta]),
+    }
+
+
+def retimed_row(tl, meta, idx, shift):
+    """idx 프레임의 pose 를 `shift` 초만큼 옮긴 시점으로 다시 보간한다.
+
+    위치는 양 끝점의 속도벡터를 접선으로 쓰는 3차 Hermite 로 (커브에서 현을
+    긋지 않도록), 각도는 선형으로 보간한다. 원래 행의 나머지 필드(link_id,
+    brake 등)는 그대로 물려받는다.
+    """
+    row = dict(meta[idx])
+    if tl is None or abs(shift) < 1e-9:
+        return row
+
+    t = tl["t"]
+    target = t[idx] + shift
+    i = int(np.clip(np.searchsorted(t, target) - 1, 0, len(t) - 2))
+    t0, t1 = t[i], t[i + 1]
+    dt = t1 - t0
+    u = 0.0 if dt <= 1e-9 else (target - t0) / dt
+
+    def lin(key):
+        return float(tl[key][i] + (tl[key][i + 1] - tl[key][i]) * u)
+
+    y0, y1 = tl["yaw"][i], tl["yaw"][i + 1]
+    v0 = (tl["vel"][i] * math.cos(math.radians(y0)),
+          tl["vel"][i] * math.sin(math.radians(y0)))
+    v1 = (tl["vel"][i + 1] * math.cos(math.radians(y1)),
+          tl["vel"][i + 1] * math.sin(math.radians(y1)))
+    h00 = 2 * u ** 3 - 3 * u ** 2 + 1
+    h10 = u ** 3 - 2 * u ** 2 + u
+    h01 = -2 * u ** 3 + 3 * u ** 2
+    h11 = u ** 3 - u ** 2
+    row["pos_x"] = float(h00 * tl["pos_x"][i] + h10 * dt * v0[0]
+                         + h01 * tl["pos_x"][i + 1] + h11 * dt * v1[0])
+    row["pos_y"] = float(h00 * tl["pos_y"][i] + h10 * dt * v0[1]
+                         + h01 * tl["pos_y"][i + 1] + h11 * dt * v1[1])
+    row["pos_z"] = lin("pos_z")
+    row["yaw"] = lin("yaw")
+    row["pitch"] = lin("pitch")
+    row["roll"] = lin("roll")
+    return row
 
 
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".bmp")
@@ -923,6 +1243,8 @@ def read_frames(source, indices):
 
 
 def main():
+    global LAT_OFFSET_M, YAW_OFFSET_DEG, LABEL_MAX_LAT
+    global EXCLUDED_BOUNDARIES, EXCLUDED_FRAMES
     ap = argparse.ArgumentParser(
         description="HD맵을 카메라에 투영해 차선 종류 라벨을 만든다 "
                     "(지금은 초점거리 확정을 위한 오버레이 검증 단계)")
@@ -933,8 +1255,9 @@ def main():
     ap.add_argument("--sensor-id", type=int, default=1, help="카메라 SensorUniqueID (기본 1=전방)")
     ap.add_argument("--fov-axis", choices=["horizontal", "vertical", "both"], default="both",
                     help="cameraFOV 를 수평/수직 중 무엇으로 볼지. both 면 나란히 비교")
-    ap.add_argument("--frames", default="0,300,600,900,1200,1500,1800,2100,2400",
-                    help="확인할 프레임 인덱스 (쉼표 구분)")
+    ap.add_argument("--frames", default=None,
+                    help="확인할 프레임 인덱스 (쉼표 구분). 생략하면 녹화 폴더에 "
+                         "저장된 프레임 전부")
     ap.add_argument("--out", default="label_check", help="결과를 저장할 폴더")
     ap.add_argument("--detect-bonnet", action="store_true",
                     help="보닛 가림 영역을 찾아 녹화 폴더에 bonnet_mask.png 로 저장한다")
@@ -945,15 +1268,62 @@ def main():
                          "흡수한다. 녹화본마다 측정해서 넣는다")
     ap.add_argument("--yaw-offset", type=float, default=0.0,
                     help="자차 yaw 에 더하는 보정 (도). 편차가 거리에 비례해 변할 때 쓴다")
+    ap.add_argument("--label-max-lat", type=float, default=LABEL_MAX_LAT,
+                    help="자차 기준 이 횡거리(m)를 넘는 경계는 라벨에 넣지 않는다 "
+                         "(기본: 제한 없음). 자동 판정이라 부정확할 수 있어 기본은 꺼둔다")
+    ap.add_argument("--exclude-file", default=None,
+                    help=f"사람이 고른 제외 경계 목록 JSON (기본: 녹화 폴더의 "
+                         f"{EXCLUDE_FILENAME}). EditLabels.py 로 만든다")
+    ap.add_argument("--crop-top", type=int, default=CROP_TOP,
+                    help=f"파생물(마스크·구조화 라벨·오버레이)에서 잘라낼 위쪽 픽셀 수 "
+                         f"(기본 {CROP_TOP}). 원본 프레임은 건드리지 않는다. "
+                         f"0 이면 자르지 않음")
+    ap.add_argument("--train-classes", choices=sorted(TRAIN_CLASS_MAPS), default=None,
+                    help="학습용 클래스 리맵 스킴. lane5 = 배경/백색실선/백색점선/"
+                         "황색/정지선 (유도선·안전지대·횡단보도는 ignore)")
+    ap.add_argument("--save-masks", action="store_true",
+                    help="오버레이 말고 학습용 라벨 마스크 PNG 를 masks/ 에 저장한다")
+    ap.add_argument("--save-vectors", action="store_true",
+                    help="차선 ID 가 붙은 구조화 라벨을 vectors/ 에 JSON 으로 저장한다")
+    ap.add_argument("--time-offset", type=float, default=None,
+                    help="pose 를 이 초만큼 옮겨서 다시 보간한다 (음수 = 과거). "
+                         "생략하면 meta.jsonl 에 cam_latency 가 없는 예전 녹화본에만 "
+                         f"-{CAMERA_PIPELINE_LATENCY}s 를 자동 적용한다")
     args = ap.parse_args()
 
-    global LAT_OFFSET_M, YAW_OFFSET_DEG
     LAT_OFFSET_M = args.lat_offset
     YAW_OFFSET_DEG = args.yaw_offset
+    LABEL_MAX_LAT = args.label_max_lat
+    exclude_path = args.exclude_file or os.path.join(args.recording, EXCLUDE_FILENAME)
+    EXCLUDED_BOUNDARIES, EXCLUDED_FRAMES = load_exclusions(exclude_path)
+    if not math.isinf(LABEL_MAX_LAT):
+        print(f"라벨 범위: |ego_lat| <= {LABEL_MAX_LAT}m")
+    if EXCLUDED_BOUNDARIES:
+        print(f"사람이 제외한 경계 {len(EXCLUDED_BOUNDARIES)}개 적용 "
+              f"(전역: {global_exclude_path()})")
     if args.lat_offset or args.yaw_offset:
         print(f"정합 보정: 가로 {args.lat_offset:+.3f} m, yaw {args.yaw_offset:+.3f} 도")
 
     meta = load_meta(os.path.join(args.recording, "meta.jsonl"))
+
+    # 카메라 지연 보정. RecordDrive 가 이미 반영했으면(cam_latency 필드가 있으면)
+    # 두 번 넣지 않는다. 예전 녹화본은 여기서 프레임 타임라인을 다시 보간해 되돌린다.
+    already = meta[0].get("cam_latency") if meta else None
+    if args.time_offset is not None:
+        time_shift = args.time_offset
+    elif already is None:
+        time_shift = -CAMERA_PIPELINE_LATENCY
+    else:
+        time_shift = 0.0
+    pose_tl = build_pose_timeline(meta) if time_shift else None
+    if time_shift and pose_tl is None:
+        print("[경고] meta.jsonl 에 시각·pose 가 없어 카메라 지연 보정을 건너뜁니다.")
+        time_shift = 0.0
+    if already is not None:
+        print(f"녹화 시 카메라 지연 {already:+.3f}s 가 이미 반영된 녹화본입니다.")
+    if time_shift:
+        print(f"카메라 지연 보정: pose 를 {time_shift:+.3f}s 시점으로 다시 보간합니다.")
+
     source = find_frame_source(args.recording)
     print(f"프레임 출처: {source[0]} "
           f"({len(source[1]) if source[0] == 'images' else os.path.basename(source[1])})")
@@ -985,8 +1355,30 @@ def main():
     print(f"클래스 분포: {dict(counts)}")
     print(f"점선 처리 대상: {sum(1 for b in boundaries if b['broken'])}개")
 
-    indices = [int(x) for x in args.frames.split(",") if x.strip()]
+    if args.frames:
+        indices = [int(x) for x in args.frames.split(",") if x.strip()]
+    else:
+        # 지정이 없으면 녹화 폴더에 실제로 저장된 프레임 전부.
+        indices = sorted(i for i in (frame_index_of(p) for p in source[1])
+                         if i is not None) if source[0] == "images" else list(range(len(meta)))
+        print(f"프레임 지정이 없어 저장된 {len(indices)}장을 전부 처리합니다.")
     indices = [i for i in indices if i < len(meta)]
+
+    # 사람이 통째로 뺀 프레임 (EditLabels.py 에서 고른다). 이미 만들어 둔
+    # 마스크·구조화 라벨이 있으면 같이 지운다 — 뺐는데 파일이 남아 있으면
+    # 학습 쪽이 그걸 그대로 읽어 버린다.
+    if EXCLUDED_FRAMES:
+        dropped = [i for i in indices if i in EXCLUDED_FRAMES]
+        indices = [i for i in indices if i not in EXCLUDED_FRAMES]
+        print(f"사람이 제외한 프레임 {len(dropped)}장 건너뜀")
+        for i in dropped:
+            for d, ext in ((os.path.join(args.recording, "masks"), "png"),
+                           (os.path.join(args.recording, "vectors"), "json"),
+                           (args.out, None)):
+                stale = (os.path.join(d, f"frame_{i:06d}.png") if ext is None
+                         else os.path.join(d, f"{i:06d}.{ext}"))
+                if os.path.isfile(stale):
+                    os.remove(stale)
 
     # pose_extrapolated 가 붙은 프레임은 카메라 촬영 시각을 상태 이력으로 보간하지
     # 못해 "가장 가까운 값"을 대신 쓴 것이다 — 실제 촬영 시점의 자차 위치/자세와
@@ -1027,6 +1419,7 @@ def main():
         sample = next(iter(frames.values()))
         h, w = sample.shape[:2]
         cam = base if (w, h) == (base.width, base.height) else base.scaled(w, h)
+        cam = cam.cropped(args.crop_top)
         cams[ax] = cam
         print(f"  [{ax:>10}] FOV {cam.fov_deg}도  원본 {cam.native_width}x{cam.native_height}"
               f" → 저장 {cam.width}x{cam.height}   fx={cam.fx:.1f} fy={cam.fy:.1f}"
@@ -1034,14 +1427,52 @@ def main():
     print("=" * 62)
 
     os.makedirs(args.out, exist_ok=True)
+    mask_dir = os.path.join(args.recording, "masks")
+    vec_dir = os.path.join(args.recording, "vectors")
+    if args.save_masks:
+        os.makedirs(mask_dir, exist_ok=True)
+    if args.save_vectors:
+        os.makedirs(vec_dir, exist_ok=True)
+    if args.train_classes:
+        names = TRAIN_CLASS_NAMES[args.train_classes]
+        print(f"학습용 클래스 리맵: {args.train_classes} = {names} "
+              f"(그 외 도색은 {CLASS_IGNORE}=ignore)")
+    if args.crop_top:
+        c0 = cams[axes[0]]
+        print(f"상단 크롭: {args.crop_top}px 제거 → 파생물 {c0.width}x{c0.height}, "
+              f"cy {c0.cy + args.crop_top:.0f} → {c0.cy:.0f} "
+              f"(원본 프레임은 그대로. 학습 때 같은 값으로 잘라야 함)")
+        if bonnet is not None:
+            bonnet = bonnet[args.crop_top:]
+
     for idx in indices:
         if idx not in frames:
             continue
-        frame, row = frames[idx], meta[idx]
+        frame = frames[idx][args.crop_top:] if args.crop_top else frames[idx]
+        row = retimed_row(pose_tl, meta, idx, time_shift)
         panels = []
         for ax in axes:
+            vectors = [] if (args.save_vectors and ax == axes[0]) else None
             label = render_frame_labels(cams[ax], boundaries, link_trees, row, fallback_z,
-                                        crosswalks, bonnet, frame)
+                                        crosswalks, bonnet, frame, vectors)
+            if vectors is not None:
+                assign_lane_ids(vectors)
+                rec = {
+                    "idx": idx,
+                    # 원본 프레임 경로. 이 파일은 자르지 않았으므로 학습 쪽에서
+                    # crop_top 만큼 잘라내야 좌표가 맞는다.
+                    "image": f"frames/{idx:06d}.png",
+                    "crop_top": int(args.crop_top),
+                    "width": int(cams[ax].width), "height": int(cams[ax].height),
+                    "train_classes": args.train_classes,
+                    "boundaries": vectors,
+                }
+                with open(os.path.join(vec_dir, f"{idx:06d}.json"), "w",
+                          encoding="utf-8") as fp:
+                    json.dump(rec, fp, ensure_ascii=False)
+            if args.save_masks and ax == axes[0]:
+                cv2.imwrite(os.path.join(mask_dir, f"{idx:06d}.png"),
+                            remap_classes(label, args.train_classes))
             marked = (label > 0) & (label != CLASS_IGNORE)
             painted = int(marked.sum())
             ratio = painted / label.size * 100
@@ -1058,6 +1489,10 @@ def main():
         cv2.imwrite(path, grid)
 
     print(f"\n저장 완료: {args.out}/frame_*.png")
+    if args.save_masks:
+        print(f"           {mask_dir}/*.png  (학습용 라벨 마스크)")
+    if args.save_vectors:
+        print(f"           {vec_dir}/*.json  (차선 ID 포함 구조화 라벨)")
     print("→ 투영선이 영상 속 차선 위에 얹히는 쪽이 맞는 가설입니다.")
 
 

@@ -27,11 +27,17 @@ meta.jsonl 의 각 줄:
     pose_dt         이 줄의 pose 를 만든 보간 기준점과 카메라 시각의 차 (초).
                     0 에 가까울수록 좋다
     pose_extrapolated  상태 이력 밖이라 보간하지 못한 프레임에만 붙는다
+    cam_latency     이 줄의 pose 에 반영된 카메라 파이프라인 지연 보정값 (초).
+                    이 필드가 있으면 라벨 생성기는 추가 보정을 넣지 않는다
 
 **자차 상태는 프레임의 시뮬레이터 시각으로 보간해서 넣는다.** 카메라 프레임은
 조립+디코드 때문에 상태보다 100~200ms 늦게 도착하므로(실측 +145ms), 받은 순간의
 최신 상태를 그대로 붙이면 급커브에서 yaw 가 5도 이상 어긋나 라벨이 차선 밖으로
 나간다. 직선에서는 티가 안 나서 놓치기 쉽다.
+
+**보간 기준 시각은 t_cam 이 아니라 t_cam - CAMERA_PIPELINE_LATENCY 다.**
+카메라 타임스탬프는 장면이 렌더된 시각이 아니라 패킷을 내보낸 시각에 가까워서,
+이미지 내용이 자기 타임스탬프보다 과거다. 자세한 실측 근거는 그 상수 옆에.
     signed_vel      속도 (m/s)
     ang_vel_z       yaw rate — 곡선 구간을 찾는 기준
     steer, accel, brake, gear
@@ -172,8 +178,55 @@ def _quat_slerp(q0, q1, t):
     return tuple(x / n for x in out)
 
 
+def _velocity_vector(yaw_deg, speed):
+    """진행방향(yaw)과 부호 있는 속력으로 맵 좌표계(x,y) 속도벡터를 만든다.
+
+    GenerateLabels.py 의 관례와 같다 — yaw 는 ENU East 기준 반시계이므로
+    전방 속도(speed)의 맵 좌표 성분은 (speed*cos(yaw), speed*sin(yaw)).
+    """
+    yaw = math.radians(yaw_deg)
+    return speed * math.cos(yaw), speed * math.sin(yaw)
+
+
+def _hermite_pos(p0, v0, p1, v1, u, dt):
+    """양 끝점의 실측 속도벡터를 접선으로 쓰는 3차 Hermite 위치 보간.
+
+    pos_x/pos_y 를 그냥 선형보간(등속 직선 이동 가정)하면 감속 중이나
+    코너링 중에 실제 경로에서 벗어난다 — 감속 중엔 실제 위치가 직선보간보다
+    앞서 있고, 코너에서는 실제 경로가 곡선인데 직선보간은 현(chord)을 그어
+    안쪽으로 잘린다. yaw 는 이미 SLERP로 처리되니 위치도 그 순간의 실제
+    진행방향・속력(signed_vel, yaw)을 접선으로 삼아 곡선으로 이어준다.
+    """
+    h00 = 2 * u ** 3 - 3 * u ** 2 + 1
+    h10 = u ** 3 - 2 * u ** 2 + u
+    h01 = -2 * u ** 3 + 3 * u ** 2
+    h11 = u ** 3 - u ** 2
+    return (
+        h00 * p0[0] + h10 * dt * v0[0] + h01 * p1[0] + h11 * dt * v1[0],
+        h00 * p0[1] + h10 * dt * v0[1] + h01 * p1[1] + h11 * dt * v1[1],
+    )
+
+
+# 카메라 프레임의 타임스탬프는 "그 장면이 렌더된 시각"이 아니라 패킷을 내보낸
+# 시각에 가깝다. 렌더 → JPEG 인코딩 → UDP 3패킷 분할 → 재조립을 거치는 동안
+# 이미지 내용은 자기 타임스탬프보다 그만큼 과거가 된다. 자차 상태는 작은 단일
+# 패킷이라 이 지연이 거의 없어서, 둘을 같은 시각으로 짝지으면 상태 쪽이 앞선다.
+#
+# 실측(test2, 회전 프레임 15장): HD맵 라벨이 실제 도색에 얹히는 비율을 시간
+# 오프셋마다 재서 최적값을 찾으면 중앙값 -0.090s, 표준편차 0.022s 로 모인다.
+# **좌회전과 우회전이 똑같이 음수 오프셋을 필요로 한다** — yaw 바이어스라면
+# 좌/우에서 부호가 반대여야 하므로, 각도 오차가 아니라 고정 지연이 맞다.
+# 이 보정을 넣으면 회전 구간 정합 점수가 0.208 → 0.403 으로 두 배가 되고
+# 직선 구간도 0.552 → 0.592 로 손해가 없다.
+CAMERA_PIPELINE_LATENCY = 0.090
+
+
 def interp_status(t_cam):
-    """카메라 프레임 시각에 해당하는 자차 상태를 선형보간한다."""
+    """카메라 프레임 시각에 해당하는 자차 상태를 보간한다.
+
+    pos_x/pos_y 는 3차 Hermite(양 끝점 속도벡터가 접선), yaw/pitch/roll 은
+    쿼터니언 SLERP, 나머지 스칼라값은 선형보간이다.
+    """
     with _status_lock:
         hist = list(_status_hist)
     if not hist:
@@ -197,10 +250,20 @@ def interp_status(t_cam):
     r = (t_cam - t0) / (t1 - t0)
 
     out = dict(a)
-    for k in ("pos_x", "pos_y", "pos_z", "signed_vel", "ang_vel_z",
-              "steer", "accel", "brake"):
+    for k in ("pos_z", "signed_vel", "ang_vel_z", "steer", "accel", "brake"):
         if k in a and k in b:
             out[k] = a[k] + (b[k] - a[k]) * r
+
+    if all(k in a and k in b for k in ("pos_x", "pos_y", "yaw", "signed_vel")):
+        v0 = _velocity_vector(a["yaw"], a["signed_vel"])
+        v1 = _velocity_vector(b["yaw"], b["signed_vel"])
+        out["pos_x"], out["pos_y"] = _hermite_pos(
+            (a["pos_x"], a["pos_y"]), v0, (b["pos_x"], b["pos_y"]), v1, r, t1 - t0)
+    elif "pos_x" in a and "pos_x" in b:
+        # 속도벡터를 만들 재료(yaw/signed_vel)가 없으면 예전처럼 선형보간.
+        out["pos_x"] = a["pos_x"] + (b["pos_x"] - a["pos_x"]) * r
+        out["pos_y"] = a["pos_y"] + (b["pos_y"] - a["pos_y"]) * r
+
     if "yaw" in a and "yaw" in b and "pitch" in a and "roll" in a:
         q0 = _euler_to_quat(a["yaw"], a["pitch"], a["roll"])
         q1 = _euler_to_quat(b["yaw"], b["pitch"], b["roll"])
@@ -548,16 +611,22 @@ def record(args):
 
                 # 프레임의 시뮬레이터 시각으로 자차 상태를 보간해서 붙인다.
                 # "지금 최신 상태"를 붙이면 급커브에서 라벨이 차선 밖으로 나간다.
+                # 타임스탬프 그대로가 아니라 CAMERA_PIPELINE_LATENCY 만큼 과거의
+                # 상태를 쓴다 — 이미지 내용이 자기 타임스탬프보다 그만큼 과거다.
                 t_cam = cam_key[0] + cam_key[1] * 1e-9
-                status, extrap = interp_status(t_cam)
+                t_scene = t_cam - CAMERA_PIPELINE_LATENCY
+                status, extrap = interp_status(t_scene)
                 status = dict(status) if status else {}
                 if status:
                     status_seen = True
                     if status.get("link_id"):
                         link_ids.add(status["link_id"])
-                    raw_dt = t_cam - (status["status_sec"]
-                                      + status["status_nsec"] * 1e-9)
+                    raw_dt = t_scene - (status["status_sec"]
+                                        + status["status_nsec"] * 1e-9)
                     status["pose_dt"] = round(raw_dt, 4)
+                    # 이 녹화본이 지연 보정을 이미 반영했다는 표식. 라벨 생성기가
+                    # 이걸 보고 같은 보정을 두 번 넣지 않는다.
+                    status["cam_latency"] = CAMERA_PIPELINE_LATENCY
                     if extrap:
                         # 보간 구간 밖 = 이력에 없는 시각. 값을 신뢰하기 어렵다.
                         status["pose_extrapolated"] = round(extrap, 4)
