@@ -290,9 +290,48 @@ class Curve:
     inlier: np.ndarray = field(default_factory=lambda: np.empty(0, bool))
     lane_id: int = 0                    # 12단계에서 채운다. 0 = 미할당
     track_id: int = 0                   # 10~11단계에서 채운다
+    age: int = 0                        # 연속으로 몇 프레임 이어졌는지 (10~11단계)
+    coasted: bool = False               # 이 프레임에 관측이 없어 예측만으로 낸 것
+    # **유도선이 자차 경계 슬롯을 대신 채운 것**이라는 표시 (12단계).
+    # lane_id 는 채워지지만 이것은 차로 경계가 아니다 - 넘으면 안 되는 선이
+    # 아니라 지나갈 길 힌트다. 회피 계획이 이걸 벽으로 오해하면 안 되고,
+    # 차로 폭 계산에도 넣으면 안 된다.
+    from_guide: bool = False
+    # **이 트랙을 지금 얼마나 믿는가** (0~1, 10~11단계가 채운다).
+    # 적합 품질에서 시작해 관측이 빠질 때마다 감쇠한다. miss 횟수 같은
+    # 정수 카운터 하나로는 "짧은 점선 gap" 과 "차선이 실제로 없어짐" 을
+    # 구분할 수 없다 - 같은 3프레임이라도 직전 관측이 좋았는지 나빴는지에
+    # 따라 다르게 취급해야 한다.
+    confidence: float = 0.0
 
     def y_at(self, x):
         return float(np.polyval(self.coef, x))
+
+    @property
+    def inlier_ratio(self):
+        return float(self.inlier.mean()) if self.inlier.size else 0.0
+
+
+@dataclass
+class StopLine:
+    """정지선 하나. **차선과 다른 물건이라 자료구조도 따로 둔다.**
+
+    차선은 진행방향을 따라 누워 `y = f(x)` 인데, 정지선은 진행방향을 **가로질러**
+    서 있어서 같은 파라미터화를 쓰면 기울기가 발산한다. 그래서 축을 바꿔
+    `x = a*y + b` 로 둔다. 그러면 `b` 가 곧 자차 정면(y=0)까지의 거리다.
+    """
+    dist: float                         # 자차 정면까지 (m). coef 의 b 와 같다
+    coef: np.ndarray                    # x = coef[0]*y + coef[1]
+    y_range: tuple                      # 실제로 관측된 가로 구간 (m)
+    x: np.ndarray = field(default_factory=lambda: np.empty(0))
+    y: np.ndarray = field(default_factory=lambda: np.empty(0))
+    inlier: np.ndarray = field(default_factory=lambda: np.empty(0, bool))
+    # **관측이 자차 정면을 실제로 덮었는가.** False 면 `dist` 는 옆에서 본
+    # 부분을 y=0 까지 외삽한 값이다. 실측으로 210프레임 중 62프레임(30%)만
+    # 정면을 덮었으므로, 이 구분을 숨기면 제어가 외삽값을 관측값으로 오해한다.
+    covers_front: bool = False
+    extrap_m: float = 0.0               # 정면까지 외삽한 거리 (덮었으면 0)
+    n_blobs: int = 1                    # x 방향 덩어리 수. 2 이상이면 횡단보도 의심
 
     @property
     def inlier_ratio(self):
@@ -325,6 +364,7 @@ class LaneResult:
     crop: np.ndarray = None             # crop_top 이후 원본 프레임
     attitude: tuple = None              # (pitch, roll) 도. None 이면 수평 가정
     widths: list = field(default_factory=list)   # 7~8. [(x, width_m), ...]
+    stopline: object = None             # StopLine | None. 12단계 번호 밖의 별도 가지
     stats: dict = field(default_factory=dict)
     timing: dict = field(default_factory=dict)
 
