@@ -52,7 +52,11 @@ for _p in (_roi_root, os.path.join(_roi_root, "lib")):
 from lib.define.Camera import Camera          # noqa: E402
 from lib.network.UDP import Receiver          # noqa: E402
 
-DEFAULT_IP = os.environ.get("MORAI_CAM_IP", "192.168.0.200")
+# **이 IP 는 시뮬레이터 주소가 아니라 이쪽에서 bind 하는 로컬 주소다.**
+# Receiver 가 socket.bind((ip, port)) 를 하기 때문에 시뮬레이터 PC 의 IP 를
+# 넣으면 "Cannot assign requested address" 로 죽는다. 어느 인터페이스로
+# 들어오든 받도록 0.0.0.0 으로 둔다.
+DEFAULT_IP = os.environ.get("MORAI_CAM_IP", "0.0.0.0")
 DEFAULT_PORT = int(os.environ.get("MORAI_CAM_PORT", "1101"))
 
 
@@ -68,6 +72,7 @@ class CameraStream:
         self._frame = None
         self._key = None
         self._seq = -1
+        self._stamp = 0.0               # 패킷에 실린 촬영 시각 (초)
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = None
@@ -81,10 +86,26 @@ class CameraStream:
     def stop(self):
         self._stop.set()
 
-    def latest(self):
+    def latest(self, with_stamp=False):
+        """최신 프레임. `with_stamp=True` 면 (frame, seq, stamp) 를 준다.
+
+        `stamp` 는 시뮬레이터가 패킷에 넣은 **촬영 시각**(초, `time.time()` 과
+        같은 epoch)이다. 받은 시각이 아니다.
+
+        이 둘을 구분해야 하는 이유는 실측 때문이다 - 촬영에서 수신까지
+        중앙값 128ms, p90 145ms 가 걸린다. IMU 같은 다른 센서를 이 프레임에
+        맞출 때 "지금 시각" 을 쓰면 128ms 만큼 미래의 값을 쓰게 된다.
+        요레이트 5도/s 인 완만한 커브에서도 0.64도 차이이고, 지면 투영에서
+        자세 1도는 40m 에서 거리 45% 오차다 (s04 주석 실측).
+
+        기본값을 False 로 둔 것은 기존 호출부(`frame, seq = cam.latest()`)를
+        깨지 않기 위해서다.
+        """
         with self._lock:
             if self._frame is None:
-                return None, -1
+                return (None, -1, 0.0) if with_stamp else (None, -1)
+            if with_stamp:
+                return self._frame.copy(), self._seq, self._stamp
             return self._frame.copy(), self._seq
 
     def wait_first(self, timeout=10.0):
@@ -105,6 +126,7 @@ class CameraStream:
                     continue
 
                 jpeg = bytes(data.image.data)
+                stamp = float(data.image.sec) + float(data.image.nsec) * 1e-9
                 key = (len(jpeg), jpeg[:16], jpeg[-16:])
                 if key == self._key:            # 같은 프레임 - 다시 풀지 않는다
                     time.sleep(0.002)
@@ -124,6 +146,7 @@ class CameraStream:
                     continue
 
                 with self._lock:
+                    self._stamp = stamp
                     self._frame = image
                     self._key = key
                     self._seq += 1
