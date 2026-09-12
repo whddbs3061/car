@@ -1,260 +1,279 @@
-# real_lane — 차선 인식 후처리
+# real_lane 사용법
 
-카메라 프레임 하나 → 차선 / 정지선. 조감도(BEV) 래스터를 만들지 않고 픽셀을 바로
-지면으로 역투영해 **자차 좌표(미터)** 에서 모든 후처리를 한다.
-
-```
-real_lane.py        후처리 전부 (합본, 3,069줄). 여기가 정본이다
-real_lane_node.py   이걸 돌려서 ROS 토픽/UDP/표준출력으로 내보내는 노드
-pipeline/           합본을 만든 출처. 참고용으로 남겨 둔 것이고 고치지 않는다
-live_pipeline.py    시뮬레이터로 단계별 눈으로 확인하는 뷰어
-tools/              녹화·평가 도구. 주행 경로에 들어가지 않는다
-```
+카메라 한 대로 **차선**과 **정지선**을 찾아 `/perception/camera/lane_info` 토픽에
+JSON 으로 내보냅니다. 좌표는 전부 **차량 기준 (x 앞, y 왼쪽, 미터)** 입니다.
 
 ---
 
-## 빨리 써보기
+## 1. 실행
 
 ```bash
-# ROS 없이, 시뮬레이터만 켜고
-python3 real_lane_node.py --no-ros
-
 # ROS 노드로
 rosrun purepursuit_mgeo real_lane_node.py
 
-# 화면으로 단계별 확인
+# ROS 없이 확인만 (표준출력으로 JSON)
+python3 real_lane_node.py --no-ros
+
+# 화면으로 보기
 python3 live_pipeline.py
 ```
 
-`best.pt` 가 필요하다. **저장소에 없다** (98MB, gitignore). 받아서
-`camera_perception/best.pt` 나 `post_processing/best.pt` 에 두면 찾는다.
-6클래스(`scheme: lane6`, epoch 24) 모델이어야 유도선이 나온다.
+**필요한 것**
+
+| | |
+|---|---|
+| `best.pt` | 6클래스 모델. **저장소에 없습니다** (98MB). 받아서 `camera_perception/` 나 `post_processing/` 에 두면 자동으로 찾습니다 |
+| `cam_set.json` | `data/sensors/cam_set.json` 을 자동으로 찾습니다 |
+| UDP 1101 | 카메라 |
+| UDP 4001 | IMU (없어도 동작합니다) |
 
 ---
 
-## 기존 노드를 그대로 대체한다
+## 2. 기존 노드와 바꿔 끼우기
 
-통합 런처는 이렇게 물려 있다.
-
-```
-morai_avoidance_highway_roundabout_final.launch
-  └─ lane_info_runner.py ──exec──> live_lane_info_publisher_v2.py   (옛 BEV 경로)
-                                     │
-                                     ├─ UDP 1101 수신
-                                     └─ /perception/camera/lane_info  (String, JSON)
-                                              │
-                                     lane_info_semantic_adapter.py
-                                              │
-                                     dashed_lane_detected / left_solid_lane_detected /
-                                     left_yellow_solid_lane_detected /
-                                     right_solid_lane_detected /
-                                     stopline_detected / stopline_distance_m
-```
-
-**어댑터가 실제로 읽는 키는 5개뿐이다.**
-
-```
-left_lane.detected   left_lane.type   left_lane.dashed     (right_lane 도 같은 셋)
-stopline_detected    stopline_distance_m
-```
-
-`real_lane_node.py` 는 그 키를 포함해 v2 가 내보내던 구조를 **그대로** 낸다
-(300프레임으로 키 누락 0 확인). 그래서 **런처도 어댑터도 회피 로직도 고칠 필요가
-없다** — `lane_info_runner.py` 가 가리키는 스크립트만 바꾸면 된다.
+`lane_info_runner.py` 에서 **한 줄만** 바꾸면 됩니다.
 
 ```python
-# lane_info_runner.py
-target = pkg_root / "lane" / "live_lane_info_publisher_v2.py"   # 이 줄만
-target = pkg_root / "lane" / "real_lane_node.py"                # 이렇게
+target = pkg_root / "lane" / "live_lane_info_publisher_v2.py"   # 기존
+target = pkg_root / "lane" / "real_lane_node.py"                # 이걸로
 ```
 
-포트도 같은 1101 슬롯이라 새로운 충돌은 없다.
-
-### 좌우 부호가 뒤집혔다
-
-옛 `lane_detection.py` 는 **왼쪽이 음수**(-1)였고, 새 파이프라인은 자차 좌표계
-y 부호를 따라 **왼쪽이 +1** 이다. JSON 의 `left_lane` / `right_lane` 은 둘 다
-"내 왼쪽/오른쪽 경계" 라는 뜻이므로 노드가 맞춰서 담는다. **JSON 을 읽는 쪽은
-바뀔 것이 없다.** `lane_id` 를 직접 쓰는 코드만 주의하면 된다.
+- 토픽 이름, JSON 키, 포트 전부 같습니다
+- `lane_info_semantic_adapter.py`, 런처, 회피 로직은 **고칠 필요 없습니다**
 
 ---
 
-## 출력
+## 3. 토픽
 
-### 항상 나가는 것
+### `/perception/camera/lane_info` — 항상 나갑니다
 
-| 키 | 뜻 |
+`std_msgs/String` 안에 JSON 이 들어 있습니다. 약 3.8 KB / 프레임, 12Hz.
+
+```python
+import json, rospy
+from std_msgs.msg import String
+
+def cb(msg):
+    info = json.loads(msg.data)
+    if info["left_lane"]["detected"]:
+        print(info["left_lane"]["type"])        # "yellow" / "white_solid" / ...
+
+rospy.Subscriber("/perception/camera/lane_info", String, cb)
+```
+
+**주요 키**
+
+| 키 | 내용 |
 |---|---|
-| `left_lane` / `right_lane` | `detected`, `type`, `dashed`, `track_id`, `age`, `coef`, `x_range_m`, `n_points`, `confidence`, `inlier_ratio`, `from_guide`, `coasted` |
-| `straddling_lane` | **지금 밟고 있는 선** (`lane_id == 0`). 차선 변경 중에만 나온다. 계약에 없던 값이라 기존 소비자는 무시한다 |
-| `left_boundary_points` / `right_boundary_points` / `centerline_points` | 자차 좌표 `[[x, y], ...]`, 0.5m 간격 |
-| `lane_width_m` | 7m 앞에서 잰 차로 폭 |
-| `lateral_error_m` / `heading_error_rad` | 중심선 기준 제어 오차 |
-| `stopline_detected` / `stopline_distance_m` | 정지선 |
-| `stopline` | 거리·계수·`inlier_ratio`·`covers_front`·`n_blobs` |
-| `lane_valid` / `output_status` / `lane_state` / `reasons` | 상태 |
-| `n_lanes` / `infer_ms` / `post_ms` | 진단 |
+| `left_lane` / `right_lane` | 내 왼쪽 / 오른쪽 차선. 아래 표 참고 |
+| `left_boundary_points` | 왼쪽 차선을 0.5m 간격 점으로. `[[x, y], ...]` |
+| `right_boundary_points` | 오른쪽 차선 점열 |
+| `centerline_points` | 두 차선의 중앙선 점열 |
+| `lane_width_m` | 차로 폭 |
+| `lateral_error_m` | 차로 중앙에서 얼마나 벗어났나 (+면 왼쪽) |
+| `heading_error_rad` | 차로 방향과 차량 방향의 차이 |
+| `stopline_detected` | 정지선이 보이나 (true/false) |
+| `stopline_distance_m` | 정지선까지 거리 |
+| `lane_state` | `"both"` / `"left"` / `"right"` / `null` |
+| `lane_valid` | 좌우 중 하나라도 있나 |
+| `reasons` | 왜 없는지 (`["NO_RIGHT"]` 등) |
+| `n_lanes`, `infer_ms`, `post_ms` | 참고용 |
 
-좌표계는 **자차 기준 x 전방 / y 좌측 / 미터** (`coordinate_convention` 에도 적힌다).
+**`left_lane` / `right_lane` 안에 들어 있는 것**
 
-크기는 프레임당 중앙 3.8 KB, 12Hz 에서 **44 KB/s** 다.
+| 키 | 내용 |
+|---|---|
+| `detected` | 찾았나 |
+| `type` | `white_solid` / `white_dashed` / `yellow` / `guide` |
+| `dashed` | 점선인가 |
+| `coef` | 곡선 계수 `[a, b, c]`. `y = a·x² + b·x + c` |
+| `x_range_m` | 이 곡선이 유효한 거리 범위 `[가까운쪽, 먼쪽]` |
+| `track_id` | 같은 차선이면 계속 같은 번호 |
+| `age` | 몇 프레임째 보이나 |
+| `confidence` | 0~1. 얼마나 믿을 만한가 |
+| `inlier_ratio` | 0~1. 곡선이 점들과 얼마나 잘 맞나 |
+| **`from_guide`** | **true 면 차선 도색이 아니라 유도선입니다** ↓ |
+| **`coasted`** | **true 면 이번에 안 보여서 예측한 값입니다** ↓ |
 
-### 꼭 봐야 할 두 플래그
+> **`from_guide` 와 `coasted` 는 꼭 확인하세요.**
+>
+> `from_guide: true` — 교차로처럼 차선 도색이 없을 때 유도선으로 대신 채운 값입니다.
+> 유도선은 "넘으면 안 되는 선"이 아니라 "이쪽으로 가라"는 안내선입니다.
+> 장애물 회피에서 벽으로 쓰면 안 됩니다.
+>
+> `coasted: true` — 이번 프레임에 안 보여서 예측만으로 낸 값입니다.
+> `confidence` 가 같이 떨어집니다.
 
-**`from_guide`** — 도색이 아니라 **유도선**이 그 자리를 채웠다는 뜻이다.
-출력의 `left`/`right` 는 제어에 "여기까지 비켜도 된다" 는 의미인데, 유도선은
-넘으면 안 되는 선이 아니라 **지나갈 길 힌트**다. 이 플래그를 무시하면 회피
-계획이 유도선을 벽으로 오해한다.
+**`straddling_lane`** — 차선 변경 중 **밟고 있는 선**입니다. 평소엔 `null` 입니다.
+이게 있으면 `left_lane` 은 그 선의 왼쪽, `right_lane` 은 오른쪽이 됩니다.
 
-**`coasted`** — 이 프레임에 관측이 없어 **예측만으로 낸 값**이다. 점선 구간을
-메우라고 있는 것이고, 신뢰도(`confidence`)가 같이 떨어진다.
+**`stopline`** — 정지선 상세
 
-### 필요하면 켜는 것
+| 키 | 내용 |
+|---|---|
+| `distance_m` | 거리 |
+| `covers_front` | 차 정면을 실제로 관측했나 (항상 true. 아니면 아예 안 내보냅니다) |
+| `n_blobs` | 2 이상이면 횡단보도일 수 있습니다 |
+| `inlier_ratio` | 직선이 얼마나 잘 맞나 |
+
+### `/perception/camera/lane_info_diag` — 문제 생겼을 때
+
+단계별로 뭐가 몇 개 나왔고, 안 나왔으면 왜 안 나왔는지 들어 있습니다.
+5번 항목 참고.
+
+---
+
+## 4. 단계별로 뭘 얻을 수 있나
+
+```
+카메라
+  ↓
+1. Segmentation      차선/정지선 픽셀 분류
+  ↓
+2. Morphology        보닛·노이즈 제거
+  ↓
+3. Lane pixels       차선 픽셀을 점으로
+  ↓
+4. Calibration       점을 지면에 투영 → 여기부터 차량 좌표 (m)
+  ↓                        └→ 정지선 (따로 처리)
+6. Boundary          점들을 차선별로 묶기
+  ↓
+9. Curve fitting     차선마다 곡선 맞추기
+  ↓
+10~11. Tracking      프레임 넘어 같은 차선 추적
+  ↓
+12. Lane ID          왼쪽 +1 / 오른쪽 -1 / 밟고 있는 선 0
+```
+
+| 단계 | 무엇을 주나 | 좌표 | 받는 법 |
+|---|---|---|---|
+| 1~2 | 클래스 마스크 | 이미지 | 토픽 없음 (너무 큼. 코드에서 직접) |
+| 3~4 | 차선 픽셀 | **차량** | `~publish_lane_pixels:=true` → `lane_points` |
+| 6 | 차선별 점 묶음 | **차량** | `~publish_boundaries:=true` → `boundaries` |
+| 9 | 곡선 계수 전부 | **차량** | 기본 ON → `curves` |
+| 10~11 | `track_id`, `confidence` | — | `left_lane.track_id` 등 |
+| 12 | 최종 차선 + 제어값 | **차량** | 기본 ON → `left_lane` / `*_points` / `lateral_error_m` |
+| 정지선 | 거리 | **차량** | 기본 ON → `stopline_distance_m` |
+
+**켜는 법**
 
 ```bash
-rosrun ... real_lane_node.py _publish_boundaries:=true
-python3 real_lane_node.py --no-ros --publish-lane-pixels
+rosrun ... real_lane_node.py _publish_boundaries:=true _publish_lane_pixels:=true
+python3 real_lane_node.py --no-ros --publish-boundaries
 ```
 
-| 파라미터 | 기본 | 추가되는 키 | 크기 |
-|---|---|---|---|
-| `~publish_curves` | **ON** | `curves` — 곡선 전부(자차 슬롯 못 받은 것 포함) | 포함됨 |
-| `~publish_boundaries` | OFF | `boundaries` — 6단계 경계 점열 | +4.4 KB/프레임 |
-| `~publish_lane_pixels` | OFF | `lane_points` — 3단계 픽셀을 **자차 좌표로** 내린 것 | +4.8 KB/프레임 |
-| `~publish_diag` | **ON** | `<topic>_diag` 토픽 | 1.4 KB/프레임 |
+| 옵션 | 기본 | 추가 크기 |
+|---|---|---|
+| `~publish_curves` | ON | (기본 포함) |
+| `~publish_boundaries` | OFF | +4.4 KB/프레임 |
+| `~publish_lane_pixels` | OFF | +4.8 KB/프레임 |
+| `~publish_diag` | ON | 1.4 KB/프레임 |
 
-**2단계 마스크는 점으로 내보내지 않는다.** 실측 프레임당 13,359 픽셀이라 JSON
-으로 183 KB, 12Hz 에서 **2.24 MB/s** 다. 마스크가 필요하면 이미지로 받고, 자차
-좌표가 필요하면 받는 쪽에서 `real_lane.unproject()` 를 부른다 (같은 파일에 있다).
+> 1~2단계 마스크는 점으로 안 내보냅니다. 프레임당 13,000점이라 2.2 MB/s 입니다.
+> 마스크가 필요하면 코드에서 직접 쓰세요.
 
-### 차선을 장애물로 쓰려면
-
-`left_boundary_points` / `right_boundary_points` 를 쓴다. 0.5m 간격으로 샘플링한
-폴리라인이라 계획기가 그대로 벽으로 쓸 수 있고, 경계당 40~80점이라 가볍다.
-마스크 픽셀을 쓸 이유가 없다 — 계획기가 필요한 건 "넘으면 안 되는 경계선"이지
-노이즈 픽셀이 아니다.
+**차선을 장애물처럼 쓰려면** `left_boundary_points` / `right_boundary_points` 를
+쓰세요. 0.5m 간격 점열이라 그대로 벽으로 넣으면 됩니다. 마스크보다 훨씬 가볍습니다.
 
 ---
 
-## 스스로 디버깅하기
+## 5. 안 될 때
 
-### 1. `lane_diag` 를 본다
+### 진단 토픽 보기
 
 ```bash
 rostopic echo /perception/camera/lane_info_diag
 ```
 
-```json
-{
-  "ms":     {"1": 5.3, "2": 13.1, "3": 19.9, "4": 19.9, "6": 22.9, "9": 40.9, "12": 0.4},
-  "counts": {"boundaries": 5, "curves": 5, "lanes": 4},
-  "ground_kept": {"white_solid": 260, "white_dashed": 39, "yellow": 56, "guide": 187},
-  "boundary":   {"white_solid": {"seeds": 3, "grown": 3, "short": 0, "kept": 2}},
-  "fit":        {"white_solid": {"failed": 0, "curv": 0, "fitted": 2}},
-  "track":      {"matched": 4, "new": 1, "coasted": 0, "junction": 0.35, ...},
-  "lane_id":    {"order_x": 7.0, "off_axis": 1, "straddling": false,
-                 "guide_reject": "도색 사용중", "guide_link": 14},
-  "stopline":   {"px": 608, "blobs": 1, "reason": null, "inlier": 0.67},
-  "tracks":     [{"id": 14, "cls": "guide", "conf": 0.87, "miss": 0, "age": 23}]
-}
-```
-
-**증상별로 어디를 볼지:**
-
 | 증상 | 볼 곳 |
 |---|---|
-| 차선이 아예 안 나옴 | `ground_kept` 가 0 이면 세그멘테이션/보닛, 아니면 `boundary` |
-| 경계는 있는데 곡선이 없음 | `fit.failed`(RANSAC 실패) / `fit.curv`(곡률 상한에 걸림) |
-| 곡선은 있는데 `lane_id` 를 못 받음 | `lane_id.off_axis`(자차와 어긋난 방향), `ego_left`/`ego_right` |
-| 정지선이 안 나옴 | `stopline.reason` — `픽셀 부족` / `직선 적합 실패` / `정면 미포함` |
+| 차선이 아예 없음 | `ground_kept` 가 0 → 모델/카메라 문제. 아니면 `boundary` |
+| 경계는 있는데 차선이 없음 | `fit.failed`, `fit.curv` |
+| 곡선은 있는데 좌우 번호를 못 받음 | `lane_id.off_axis`, `ego_left`, `ego_right` |
+| 정지선이 없음 | `stopline.reason` |
 | 유도선이 안 잡힘 | `lane_id.guide_reject`, `guide_link` |
-| 교차로에서 이상함 | `track.junction` 이 올라가는지 (0 정상 ~ 1 교차로) |
-| `track_id` 가 자꾸 바뀜 | `tracks[].conf` 가 임계(0.30) 근처를 오르내리는지 |
+| 교차로에서 이상함 | `track.junction` (0=평범, 1=교차로) |
+| `track_id` 가 자꾸 바뀜 | `tracks[].conf` |
 
-### 2. 단계를 끊어서 본다
-
-```bash
-python3 real_lane_node.py --no-ros --stage 6      # 6단계까지만
-python3 live_pipeline.py --stage 6                # 화면으로
-```
-
-`live_pipeline.py` 는 실행 중에 키로 바꾼다: `1 2 3 4 6 9 0`(=12단계),
-`k` 추적 모드(off/greedy/hungarian/kalman), `t` 조감 패널, `p` 정지, `s` 저장.
-
-### 3. 녹화해서 반복 재생한다
-
-추적은 **상태를 갖는다.** 같은 순서로 다시 돌려야 같은 결과가 나오므로, 시뮬레이터
-앞에서 설정을 바꿔가며 비교할 수 없다(그 사이 차가 움직인다).
+### 화면으로 보기
 
 ```bash
-python3 tools/record_drive.py --out rec/drive01 --frames 300   # 주행 중에
-python3 tools/eval_tracking.py --rec rec/drive01               # 4-way 비교
+python3 live_pipeline.py
 ```
 
-```
-지표                  off     greedy   hungarian   kalman
-좌+1 존재율          91.0%    ...
-우 dy max(m)         1.369    ...
-차로폭 표준편차        0.333    ...
-```
+| 키 | 동작 |
+|---|---|
+| `1` `2` `3` `4` `6` `9` `0` | 그 단계까지만 (0 = 마지막) |
+| `k` | 추적 모드 바꾸기 |
+| `t` | 위에서 본 화면 켜고 끄기 |
+| `p` | 일시정지 |
+| `s` | 화면 저장 |
+| `q` | 종료 |
 
-> `off` 의 `id전환` 이 0 으로 보이는 것은 `track_id` 자체가 없어서 셀 수 없는
-> 것이지 0 이 아니다. 연관의 효과는 **greedy 와 hungarian 을 비교**해야 보인다.
+화면 라벨: `+1 yellow 0.87 #14` = 왼쪽 차선 / 황색 / 신뢰도 0.87 / track_id 14.
+`G` 가 붙으면 유도선, **가는 선**은 예측값입니다.
+
+### 단계를 끊어서 보기
+
+```bash
+python3 real_lane_node.py --no-ros --stage 6     # 6단계까지만
+```
 
 ---
 
-## 파이프라인
+## 6. 코드
 
+| 파일 | |
+|---|---|
+| **`real_lane.py`** | **차선 인식 전부. 고칠 곳은 여기입니다** |
+| `real_lane_node.py` | 위를 돌려서 토픽으로 내보내는 노드 |
+| `morai_camera.py` | 카메라 UDP 수신 |
+| `morai_imu.py` | IMU UDP 수신 |
+| `live_pipeline.py` | 화면으로 보는 뷰어 |
+| `pipeline/` | `real_lane.py` 를 만든 원본. **참고용이고 고치지 않습니다** |
+| `tools/` | 녹화·평가 도구 (주행에는 안 씁니다) |
+
+`real_lane.py` 안의 주요 함수 — 단계 순서대로입니다.
+
+```python
+seg = Segmenter()          # 모델·카메라 설정을 한 번만 올림
+tracker = Tracker()        # 프레임 넘어 상태를 들고 있음
+link = GuideLink()         # 유도선 연결 기억
+
+mask, crop = seg.apply(frame)              # 1단계
+clean, _   = morphology(mask, seg.bonnet)  # 2단계
+pts, _     = lane_pixels(clean, occluded=seg.bonnet)   # 3단계
+gnd, _     = to_ground(pts, seg.cam)       # 4단계 → 차량 좌표
+bounds, _  = group_boundaries(gnd)         # 6단계
+curves, _  = fit_curves(bounds, rng=rng)   # 9단계
+tracked, _ = tracker.update(curves, dt=dt) # 10~11단계
+lanes, _   = assign_lane_ids(tracked, guide_link=link)  # 12단계
+stop, _    = detect_stopline(clean, seg.cam)            # 정지선
 ```
-Segmentation      6클래스 (배경/백색실선/백색점선/황색/정지선/유도선)
-  ↓
-Morphology        보닛 제거 + 작은 덩어리 제거
-  ↓
-Lane pixels       행별 런 중점 → 점열 (이미지 좌표)
-  ↓
-Calibration       픽셀 → 광선 → 지면 교점 = 자차 좌표 (m)      ← BEV 대체 지점
-  ↓                                    └─→ 정지선 (별도 가지)
-Boundary          씨앗 + 행진 → 경계별 점 묶음
-  ↓
-Curve fitting     RANSAC + 2차식 → 계수 + 인라이어
-  ↓
-Tracking          Kalman predict → Hungarian → track_id → Kalman update → coast
-  ↓
-Lane ID           7m 에서 좌우 순번. +1 왼쪽 / -1 오른쪽 / 0 밟고 있는 선
-```
 
-각 단계가 왜 그렇게 되어 있는지는 `real_lane.py` 의 단계별 주석에 **측정값과
-함께** 적혀 있다. 임계를 바꾸기 전에 그 주석을 먼저 읽는 것을 권한다 — 대부분은
-실측으로 정한 값이고, 시도했다가 되돌린 것들도 이유와 함께 남겨 놓았다.
+모든 함수가 `(결과, 통계)` 를 돌려줍니다. 통계가 진단 토픽에 실리는 내용입니다.
 
-### 자주 만지게 되는 임계
+자주 만지게 되는 값들은 `real_lane.py` 안에 상수로 모여 있고, 각각 왜 그 값인지
+주석에 적혀 있습니다.
 
-| 파일 위치 | 상수 | 기본 | 뜻 |
-|---|---|---|---|
-| 6단계 | `MISS_MAX_M` | 2.3 | 실선·황색선이 건너뛸 수 있는 빈 구간 |
-| 6단계 | `MISS_MAX_BY_CLASS` | 점선 6.0 / 유도선 4.0 | 클래스별 예외 |
-| 6단계 | `JOIN_MAX_SLOPE_DIFF` | 0.30 | 이음매에서 허용할 기울기 차 |
-| 9단계 | `MAX_CURV_LANE` | 0.05 | 곡률 상한 (반경 10m) |
-| 10~11단계 | `CONF_OUT` / `CONF_DROP` | 0.30 / 0.15 | 출력·폐기 신뢰도 |
-| 10~11단계 | `Q_RATE_M_PER_S` | 3.0 | 예측 잡음 (자차 운동 없어서 큼) |
-| 12단계 | `EGO_MAX_SLOPE` | 0.5 | 자차 슬롯을 받을 최대 기울기 |
-| 12단계 | `STRADDLE_Y_M` | 0.5 | 이 안이면 "밟고 있는 선"(0) |
-| 정지선 | `REQUIRE_FRONT` | True | 정면을 안 덮으면 안 내보냄 |
+| 상수 | 기본 | 뜻 |
+|---|---|---|
+| `MISS_MAX_M` | 2.3 | 실선이 끊겨도 이어붙일 최대 거리 |
+| `MISS_MAX_BY_CLASS` | 점선 6.0 / 유도선 4.0 | 점선은 더 멀리 이어붙임 |
+| `MAX_CURV_LANE` | 0.05 | 이보다 많이 휘면 차선이 아님 |
+| `CONF_OUT` / `CONF_DROP` | 0.30 / 0.15 | 내보낼 / 버릴 신뢰도 |
+| `EGO_MAX_SLOPE` | 0.5 | 차와 너무 어긋난 선은 내 차선이 아님 |
+| `STRADDLE_Y_M` | 0.5 | 이보다 가까우면 "밟고 있는 선" |
+| `REQUIRE_FRONT` | True | 정면을 안 본 정지선은 안 내보냄 |
 
 ---
 
-## 알려진 한계
+## 7. 아직 안 되는 것
 
-- **자차 운동이 안 들어온다.** 칼만 예측이 랜덤워크라 급커브에서 coast 가 뒤처진다.
-  `predict(dt, ego=(dx, dy, dpsi))` 인터페이스는 열려 있고, IMU 요레이트를 넣으면
-  `Q_RATE_M_PER_S` 를 10배쯤 줄일 수 있다.
-- **차로 폭이 지도값(3.5m)보다 좁게 나온다** (측정 중앙 3.21m, 표준편차 0.28).
-  차체 자세(pitch) 때문일 가능성이 크다. 7~8단계(차로 폭 자기보정)가 이걸 영상만
-  으로 역산하는 단계인데 아직 없다.
-- **횡단보도를 구분하지 않는다.** 정지선과 기하가 같아서(진행방향에 수직인 흰 띠)
-  정지선으로 잡힐 수 있다. 단서는 개수이고(`stopline.n_blobs` 가 2 이상),
-  지금은 가장 가까운 덩어리만 쓰고 개수만 남긴다.
-- **`lane_id` 에 hysteresis 가 없다.** 매 프레임 새로 매기므로 교차로처럼 곡선
-  개수가 출렁이는 곳에서 순번이 흔들릴 수 있다. `track_id` 는 안정적이다.
-- **가림 뒤 차선을 복원하지 않는다.** 일부러 그렇게 뒀다 — 보지 못한 구간을
-  지어내는 일이고, 그 값을 제어가 실제 관측과 같은 신뢰도로 받으면 안 된다.
+- **횡단보도를 정지선과 구분 못 합니다.** `stopline.n_blobs` 가 2 이상이면 의심하세요.
+- **교차로에서 좌우 번호가 흔들릴 수 있습니다.** `track_id` 는 안정적입니다.
+- **가림(앞차 등) 뒤 차선은 복원하지 않습니다.** 일부러 그렇게 했습니다 — 안 보이는
+  구간을 만들어내면 제어가 그걸 실제 관측과 구분할 수 없습니다.
+- **차로 폭이 3.2m 쯤으로 나옵니다** (지도값 3.5m). 카메라 각도 보정이 남아 있습니다.
+- **IMU 효과는 눈으로만 확인했고 수치로는 안 쟀습니다.** 커브에서 예측이 개선되는
+  것을 화면으로 확인했지만, 녹화본에 IMU 가 같이 기록되지 않아 비교 측정은 아직입니다.

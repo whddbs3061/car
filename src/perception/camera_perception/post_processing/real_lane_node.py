@@ -89,6 +89,11 @@ if _HERE not in sys.path:
 
 import real_lane as rl                                          # noqa: E402
 from morai_camera import DEFAULT_IP, DEFAULT_PORT, CameraStream  # noqa: E402
+try:
+    from morai_imu import ImuStream                                  # noqa: E402
+except SystemExit:
+    # ROI/lib 를 못 찾는 환경이면 IMU 없이 돈다. 카메라만으로도 동작해야 한다.
+    ImuStream = None
 
 FRAME_ID = "base_link"
 DEFAULT_TOPIC = "/perception/camera/lane_info"
@@ -295,6 +300,15 @@ class Runner:
         self.tracker = None if args.no_track else rl.Tracker()
         self.link = None if args.no_track else rl.GuideLink()
         self.rng = np.random.default_rng(0)
+        self.imu = None
+        if getattr(args, "imu", False) and ImuStream is not None:
+            kw = {}
+            if args.imu_ip:
+                kw["ip"] = args.imu_ip
+            if args.imu_port:
+                kw["port"] = args.imu_port
+            self.imu = ImuStream(**kw).start()
+        self.prev_stamp = 0.0
         self.opt = {"curves": args.publish_curves,
                     "boundaries": args.publish_boundaries,
                     "lane_pixels": args.publish_lane_pixels}
@@ -322,6 +336,11 @@ class Runner:
         if self.args.stage < 4:
             return r, t
 
+        # **프레임의 촬영 시각으로** IMU 를 찾는다. "지금 값" 을 쓰면 카메라
+        # 지연(중앙 128ms) 만큼 미래의 자세를 적용하게 된다.
+        if self.imu is not None and self.args.imu_attitude:
+            r.attitude = self.imu.attitude_deg(stamp, relative=True)
+
         t0 = time.perf_counter()
         r.ground, r.stats["s04"] = rl.to_ground(r.pixels, self.seg.cam, r.attitude)
         r.stopline, r.stats["stop"] = rl.detect_stopline(r.clean, self.seg.cam)
@@ -341,11 +360,24 @@ class Runner:
         if self.args.stage < 12:
             return r, t
 
+        # 자차 운동을 칼만 예측에 넣는다. **전진량(dx)은 모른다** - IMU 만으로는
+        # 속도를 알 수 없고 가속도 적분은 드리프트한다. 요 변화만 넣어도 커브에서
+        # 가장 큰 오차가 빠진다: 25m 앞에서 lateral = 25 * dpsi 인데, 요레이트
+        # 0.3rad/s 에 dt 0.08s 면 0.6m 다. 전진 쪽은 slope*dx 라 0.03m 수준이다.
+        ego = None
+        if self.imu is not None and self.prev_stamp:
+            dpsi = self.imu.delta_yaw(self.prev_stamp, stamp)
+            if dpsi is not None:
+                ego = (0.0, 0.0, float(dpsi))
+        self.prev_stamp = stamp
+
         used = r.curves
         if self.tracker is not None:
             t0 = time.perf_counter()
             used, r.stats["s10"] = self.tracker.update(
-                r.curves, dt=dt, context={"s02": r.stats.get("s02")})
+                r.curves, dt=dt, ego=ego, context={"s02": r.stats.get("s02")})
+            r.stats["s10"]["dpsi_deg"] = (None if ego is None
+                                          else round(np.degrees(ego[2]), 3))
             t["10"] = (time.perf_counter() - t0) * 1e3
 
         t0 = time.perf_counter()
@@ -368,6 +400,18 @@ def main(argv=None):
     ap.add_argument("--every", type=int, default=1)
     ap.add_argument("--stage", type=int, default=12, help="N단계까지만 (디버깅)")
     ap.add_argument("--no-track", action="store_true")
+    # --- IMU ---------------------------------------------------------------
+    # **요 변화만 쓴다.** 자세(pitch/roll)는 기본으로 끈다 - IMU 는 중력 기준
+    # 자세를 주는데 s04 의 지면 모델이 필요한 것은 노면 기준 자세라, 경사로에서
+    # 노면 경사까지 차체 기울기로 오해해 과보정한다. 실측: 정차 중 IMU pitch
+    # -3.52도를 그대로 넣으면 차로 폭이 4.11m (지도값 3.5m).
+    ap.add_argument("--imu", action="store_true", default=True,
+                    help="IMU 요 변화를 칼만 예측에 쓴다")
+    ap.add_argument("--no-imu", dest="imu", action="store_false")
+    ap.add_argument("--imu-ip", default=None)
+    ap.add_argument("--imu-port", type=int, default=None)
+    ap.add_argument("--imu-attitude", action="store_true",
+                    help="지면 기울기에도 IMU 를 쓴다 (기준선 대비 변화분만)")
     ap.add_argument("--publish-curves", action="store_true", default=True)
     ap.add_argument("--publish-boundaries", action="store_true")
     ap.add_argument("--publish-lane-pixels", action="store_true")
@@ -409,6 +453,11 @@ def main(argv=None):
     print(f"[real_lane] {os.path.basename(info['path'])}  epoch {info['epoch']} "
           f"{info['backbone']}  {info['num_classes']}클래스 {info['scheme']}  "
           f"device={runner.seg.device}")
+    if runner.imu is not None:
+        ok = runner.imu.wait_first(timeout=3.0)
+        print(f"[real_lane] IMU {'연결' if ok else '**안 옴**'} "
+              f"(요 변화 {'사용' if ok else '미사용'}, "
+              f"자세 {'사용' if args.imu_attitude else '미사용'})")
     print(f"[real_lane] 단계 {args.stage}  추적 {'끔' if args.no_track else '켬'}  "
           f"선택출력 curves={args.publish_curves} boundaries={args.publish_boundaries} "
           f"lane_pixels={args.publish_lane_pixels}")
@@ -469,6 +518,8 @@ def main(argv=None):
         pass
     finally:
         cam.stop()
+        if runner.imu is not None:
+            runner.imu.stop()
         print("[real_lane] 종료")
 
 

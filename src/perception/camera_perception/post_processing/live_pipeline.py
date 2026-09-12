@@ -43,16 +43,13 @@ for _p in (_HERE, os.path.join(_HERE, "pipeline")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from _common import (CLASS_GUIDE, CLASS_NAMES, LaneResult)     # noqa: E402
-import s01_segmentation as s01                                  # noqa: E402
-import s02_morphology as s02                                    # noqa: E402
-import s03_lane_pixels as s03                                   # noqa: E402
-import s04_calibration as s04                                   # noqa: E402
-import s06_boundary as s06                                      # noqa: E402
-import s09_curve_fit as s09                                     # noqa: E402
-import s10_tracking as s10                                      # noqa: E402
-import s12_lane_id as s12                                       # noqa: E402
-import stopline as stopln                                       # noqa: E402
+# **합본을 쓴다.** pipeline/ 모듈이 아니라 real_lane.py 가 정본이다.
+import real_lane as rl                                          # noqa: E402
+from real_lane import CLASS_GUIDE, CLASS_NAMES, LaneResult      # noqa: E402
+try:
+    from morai_imu import ImuStream                              # noqa: E402
+except SystemExit:
+    ImuStream = None
 from morai_camera import DEFAULT_IP, DEFAULT_PORT, CameraStream  # noqa: E402
 
 STAGES = (1, 2, 3, 4, 6, 9, 12)
@@ -80,7 +77,8 @@ STOP_EXTRAP = (80, 80, 220)       # 옆에서 본 것을 정면까지 외삽한 
 TOP_X_MAX, TOP_Y_ABS, TOP_PX_PER_M = 40.0, 10.0, 11
 
 
-def run_stages(seg, frame, upto, rng, tracker=None, dt=0.1, guide_link=None):
+def run_stages(seg, frame, upto, rng, tracker=None, dt=0.1, guide_link=None,
+               ego=None):
     """프레임 하나를 `upto` 단계까지 태운다. -> (LaneResult, 단계별 ms)"""
     r, t = LaneResult(), {}
     r.tracked = None
@@ -92,35 +90,35 @@ def run_stages(seg, frame, upto, rng, tracker=None, dt=0.1, guide_link=None):
         return r, t
 
     t0 = time.perf_counter()
-    r.clean, r.stats["s02"] = s02.apply(r.mask, seg.bonnet)
+    r.clean, r.stats["s02"] = rl.morphology(r.mask, seg.bonnet)
     t["2"] = (time.perf_counter() - t0) * 1e3
     if upto < 3:
         return r, t
 
     t0 = time.perf_counter()
-    r.pixels, r.stats["s03"] = s03.apply(r.clean, occluded=seg.bonnet)
+    r.pixels, r.stats["s03"] = rl.lane_pixels(r.clean, occluded=seg.bonnet)
     t["3"] = (time.perf_counter() - t0) * 1e3
     if upto < 4:
         return r, t
 
     t0 = time.perf_counter()
-    r.ground, r.stats["s04"] = s04.apply(r.pixels, seg.cam, r.attitude)
+    r.ground, r.stats["s04"] = rl.to_ground(r.pixels, seg.cam, r.attitude)
     t["4"] = (time.perf_counter() - t0) * 1e3
 
     # 정지선은 **12단계 번호 밖의 별도 가지**다. s04 만 공유한다.
-    r.stopline, r.stats["stop"] = stopln.apply(r.clean, seg.cam, r.attitude)
+    r.stopline, r.stats["stop"] = rl.detect_stopline(r.clean, seg.cam, r.attitude)
 
     if upto < 6:
         return r, t
 
     t0 = time.perf_counter()
-    r.boundaries, r.stats["s06"] = s06.apply(r.ground)
+    r.boundaries, r.stats["s06"] = rl.group_boundaries(r.ground)
     t["6"] = (time.perf_counter() - t0) * 1e3
     if upto < 9:
         return r, t
 
     t0 = time.perf_counter()
-    r.curves, r.stats["s09"] = s09.apply(r.boundaries, rng=rng)
+    r.curves, r.stats["s09"] = rl.fit_curves(r.boundaries, rng=rng)
     t["9"] = (time.perf_counter() - t0) * 1e3
     if upto < 12:
         return r, t
@@ -130,14 +128,14 @@ def run_stages(seg, frame, upto, rng, tracker=None, dt=0.1, guide_link=None):
     if tracker is not None:
         t0 = time.perf_counter()
         used, r.stats["s10"] = tracker.update(
-            r.curves, dt=dt, context={"s02": r.stats.get("s02")})
+            r.curves, dt=dt, ego=ego, context={"s02": r.stats.get("s02")})
         t["10"] = (time.perf_counter() - t0) * 1e3
         r.tracked = used
 
     t0 = time.perf_counter()
     # **GuideLink 는 프레임을 넘는 상태다.** 호출부가 들고 있어야 한다
     # (좌측 도색이 보이는 동안 이어지는 유도선을 기억해 두는 구조).
-    r.lanes, r.stats["s12"] = s12.apply(used, guide_link=guide_link)
+    r.lanes, r.stats["s12"] = rl.assign_lane_ids(used, guide_link=guide_link)
     t["12"] = (time.perf_counter() - t0) * 1e3
     return r, t
 
@@ -334,7 +332,7 @@ def stage_line(r, stage):
         return (f"곡선 {len(r.curves)}개  " + "  ".join(
             f"{CLASS_NAMES[c.cls][:6]}({c.inlier_ratio:.0%})" for c in r.curves))
     lanes = [c for c in r.curves if c.lane_id]
-    return (s12.format_stats(r.stats["s12"])[0] + "   " +
+    return (rl.format_lane_id_stats(r.stats["s12"])[0] + "   " +
             " ".join(f"{c.lane_id:+d}:{CLASS_NAMES[c.cls][:6]}" for c in lanes))
 
 
@@ -347,6 +345,8 @@ def main(argv=None):
     ap.add_argument("--device", default=None)
     ap.add_argument("--scale", type=float, default=1.0)
     ap.add_argument("--no-top", action="store_true", help="조감 패널을 끈다")
+    ap.add_argument("--no-imu", dest="imu", action="store_false", default=True,
+                    help="IMU 요 변화를 칼만 예측에 안 쓴다")
     ap.add_argument("--track", default="kalman",
                     choices=("off", "greedy", "hungarian", "kalman"),
                     help="추적 모드. 실행 중 k 키로도 바꾼다")
@@ -354,7 +354,7 @@ def main(argv=None):
     ap.add_argument("--save-dir", default=".", help="s 키로 저장할 폴더")
     args = ap.parse_args(argv)
 
-    seg = s01.Segmenter(checkpoint=args.checkpoint, device=args.device)
+    seg = rl.Segmenter(checkpoint=args.checkpoint, device=args.device)
     print(f"[pipe] {os.path.basename(seg.info['path'])}  epoch {seg.info['epoch']} "
           f"{seg.info['backbone']}  {seg.info['num_classes']}클래스 "
           f"{seg.info['scheme']}  device={seg.device}")
@@ -362,6 +362,11 @@ def main(argv=None):
           f"키: 1 2 3 4 6 9 0(=12) k t p s q")
 
     rng = np.random.default_rng(0)
+    imu = ImuStream().start() if (args.imu and ImuStream is not None) else None
+    if imu is not None:
+        print(f"[pipe] IMU {'연결' if imu.wait_first(timeout=3.0) else '**안 옴**'}"
+              f"  (요 변화를 칼만 예측에)")
+    prev_stamp = [0.0]
 
     TRACK_MODES = ("off", "greedy", "hungarian", "kalman")
     TRACK_CFG = {"greedy":    dict(assoc="greedy",    kalman=False),
@@ -369,11 +374,11 @@ def main(argv=None):
                  "kalman":    dict(assoc="hungarian", kalman=True)}
 
     def make_tracker(mode):
-        return None if mode == "off" else s10.Tracker(**TRACK_CFG[mode])
+        return None if mode == "off" else rl.Tracker(**TRACK_CFG[mode])
 
     # 유도선 링크는 track_id 를 쓰므로 추적이 켜져 있을 때만 의미가 있다
     def make_link(mode):
-        return None if mode == "off" else s12.GuideLink()
+        return None if mode == "off" else rl.GuideLink()
 
     track_mode = args.track
     tracker = make_tracker(track_mode)
@@ -392,6 +397,7 @@ def main(argv=None):
     paused = False
     last_seq, n_since = -1, 0
     last_stamp, dt_cam = 0.0, 0.1
+    last_ego = None
     r, frame, fps, t_prev = None, None, 0.0, time.time()
     n_saved, t_log = 0, 0.0
 
@@ -409,9 +415,16 @@ def main(argv=None):
                     if n_since >= args.every:
                         n_since = 0
                         frame = f
+                        ego = None
+                        if imu is not None and prev_stamp[0]:
+                            dp = imu.delta_yaw(prev_stamp[0], stamp)
+                            if dp is not None:
+                                ego = (0.0, 0.0, float(dp))
+                        prev_stamp[0] = stamp
                         r, tms = run_stages(seg, frame, stage, rng,
                                             tracker=tracker, dt=max(dt_cam, 1e-3),
-                                            guide_link=guide_link)
+                                            guide_link=guide_link, ego=ego)
+                        last_ego = ego
                         now = time.time()
                         dt = now - t_prev
                         t_prev = now
@@ -425,6 +438,8 @@ def main(argv=None):
                                   f"{sum(tms.values()):5.1f}ms "
                                   + (f"J{j:.2f} " if stage == 12 and tracker else "")
                                   + (f"link#{gl} " if gl else "")
+                                  + (f"dyaw{np.degrees(last_ego[2]):+5.2f}deg "
+                                     if last_ego else "")
                                   + (f"STOP{r.stopline.dist:5.1f}m"
                                      f"{'' if r.stopline.covers_front else '~'} "
                                      if r.stopline is not None else "")
@@ -481,6 +496,8 @@ def main(argv=None):
         pass
     finally:
         cam.stop()
+        if imu is not None:
+            imu.stop()
         cv2.destroyAllWindows()
         print("[pipe] 종료")
 
