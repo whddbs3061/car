@@ -1,0 +1,22 @@
+{
+  "route_sha256": "50658991e607d9339d76e4cd6cb169dfc733ea53b93de2c3e222460bb497cc05",
+  "highway": {
+    "start_s_m": 1118.742,
+    "end_s_m": 1741.721,
+    "handoff_enabled": true,
+    "handoff_s_m": 1590.249,
+    "max_route_offset_m": 11.0
+  },
+  "roundabout": {
+    "enabled": false,
+    "request_start_s_m": null,
+    "yield_s_m": null,
+    "entry_s_m": null,
+    "conflict_s_m": null,
+    "request_end_s_m": null,
+    "conflict_xy_map": null,
+    "conflict_radius_m": 3.0,
+    "circulating_link_ids": [],
+    "max_route_offset_m": 5.0
+  }
+}

@@ -1,0 +1,58 @@
+# highway_overtake_node parameters, loaded into ~ (/highway_lane_strategy/) by
+# final_ws_highway_overtake_bringup.launch.  Every field of
+# purepursuit_mgeo.highway_overtake.OvertakeConfig can be set here; unlisted
+# fields keep their code defaults.  Topics, gates, the pass-through cruise speed
+# and the highway speeds come from the launch (do not repeat them here).
+
+# ---- Highway zone (MGeo local ENU, points on the global route) ---------------
+# The planner works between these points while route_mission_gate also reports
+# the highway route.  Keep route_mission_regions_overtake.json handoff_s_m at the
+# zone end (s 1590.249) so the gate hands over at the same point.
+zone_start_xy: [62.43, 215.00]        # route s 1160.2, entry lane, 120 km/h links begin
+zone_end_xy: [75.03, -214.54]         # route s 1590.2, the global path meets L3 here
+# Entry lane right edge (solid) converges onto the divider between these points.
+entry_taper_start_xy: [63.01, 160.00] # route s 1215.2
+entry_taper_end_xy: [66.90, 88.20]    # route s 1287.2
+
+# ---- Speed [m/s] ------------------------------------------------------------
+# Inside the zone: cruise = highway_cruise_kph, overtaking up to
+# highway_max_speed_kph (launch args).  Outside: the integration cruise speed.
+end_speed_mps: 15.0                  # reached by the zone end (54 km/h < 60 km/h)
+end_decel_mps2: 1.5
+target_accel_mps2: 1.5                # slew of the published target speed
+target_decel_mps2: 4.0
+
+# ---- Lane change: one lane at a time, at most three ------------------------
+max_changes: 3
+max_entry_angle_deg: 5.0              # heading of the diagonal part
+max_lateral_accel_mps2: 1.5           # also bounds the change length at speed
+change_start_m: 2.0
+
+# ---- Gap acceptance (aggressive) ---------------------------------------------
+# Merge as soon as the ego is even slightly ahead of the left-lane car and
+# faster than it; a closing gap also needs time gap + braking distance.
+gap_front_min_m: 3.0
+gap_rear_min_m: 1.0
+gap_time_s: 0.5
+gap_open_time_s: 0.0
+gap_comfort_decel_mps2: 3.0
+front_speed_margin_mps: 0.5
+rear_speed_margin_mps: 0.5
+commit_confirm_ticks: 1
+
+# ---- Lead following ----------------------------------------------------------
+follow_standstill_m: 4.0
+follow_time_gap_s: 1.6
+emergency_gap_m: 1.5
+emergency_ttc_s: 1.0
+
+# ---- Camera lane reference ---------------------------------------------------
+lane_width_default_m: 3.5
+lane_width_min_m: 2.8
+lane_width_max_m: 4.2
+lane_timeout_s: 0.6
+reacquire_tolerance_m: 0.8
+solid_confirm_frames: 3
+
+# ---- Inputs ------------------------------------------------------------------
+base_timeout_s: 0.8                   # same base-trajectory freshness as highway_lane_strategy
