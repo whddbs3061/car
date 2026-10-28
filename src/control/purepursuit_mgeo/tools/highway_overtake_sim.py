@@ -122,17 +122,54 @@ class Line:
         return None
 
 
+# Zone end = lane funnel (MGeo R_KR_PR_K-city_2025, road frame shifted by
+# -0.44 m so its highway lanes match the idealised ones above): L1, L2 and L3
+# converge on one node at x 432.9 (links A2256W000445/422/423).  The L1/L2
+# line ends at x 345, a hatched island whose left edge (B2256W000025/1693)
+# sweeps from the right edge across L1 and L2 to the end of the L2/L3 line,
+# then recedes (B2256W000021) while the lane splits into two toll lanes
+# (B2256W000184 between them, B2256W000159 left edge).  From x 210 an exit
+# lane opens right of L1 (right edge B2256W001695).
+FUNNEL_X = 432.9
+SCORE_END_X = 520.0       # collisions and lines are scored into the toll lanes
+ISLAND_EDGE = [(358.0, 1.66), (360.0, 1.76), (370.0, 2.46), (380.0, 3.47), (390.0, 4.47),
+               (400.0, 5.50), (410.0, 6.51), (420.0, 7.49), (430.0, 8.52), (432.9, 8.83),
+               (440.0, 8.07), (450.0, 7.10), (460.0, 6.09), (470.0, 5.09), (480.0, 4.10),
+               (490.0, 3.29), (500.0, 3.25), (520.0, 3.14), (540.0, 3.06), (560.0, 2.96),
+               (580.0, 2.89)]
+TOLL_SPLIT = [(467.6, 8.53), (470.0, 8.34), (480.0, 7.51), (490.0, 6.85), (500.0, 6.82),
+              (547.6, 6.86), (580.0, 6.85)]
+TOLL_LEFT_EDGE = [(459.1, 12.32), (470.0, 11.91), (480.0, 11.56), (490.0, 11.36), (500.0, 11.33),
+                  (550.0, 11.34), (560.0, 10.91), (570.0, 10.66), (580.0, 10.65)]
+EXIT_EDGE = [(210.0, 1.70), (220.0, 1.11), (230.0, 0.49), (240.0, -0.08), (250.0, -0.66),
+             (260.0, -1.24), (270.0, -1.82), (280.0, -2.25), (520.0, -2.22), (530.0, -2.27),
+             (540.0, -2.62), (550.0, -3.46), (560.0, -4.90), (570.0, -7.39)]
+
+
+def _line(name, points, kinds):
+    return Line(name, [p[0] for p in points], [p[1] for p in points], kinds)
+
+
 LINES = [
     Line("edge_right", [-400, ENTRY_TAPER[0], ENTRY_TAPER[1], 800], [-1.75, -1.75, 1.75, 1.75],
-         [(-400, 800, "solid")]),
+         [(-400, 210, "solid"), (210, 357, "dashed"), (357, 800, "solid")]),
     Line("entry_divider", [-400, ENTRY_TAPER[1]], [1.75, 1.75],
          [(-400, -35, "solid"), (-35, ENTRY_TAPER[1], "dashed")]),
-    Line("l1_l2", [-400, 800], [5.25, 5.25], [(-400, 800, "dashed")]),
-    Line("l2_l3", [-400, 800], [8.75, 8.75], [(-400, 800, "dashed")]),
+    Line("l1_l2", [-400, 345], [5.25, 5.25], [(-400, 345, "dashed")]),
+    Line("l2_l3", [-400, FUNNEL_X], [8.75, 8.75], [(-400, FUNNEL_X, "dashed")]),
     Line("l3_l4", [-400, 800], [12.25, 12.25], [(-400, 800, "solid")]),
     Line("l4_median", [-400, 800], [15.75, 15.75], [(-400, 800, "solid")]),
+    _line("island", ISLAND_EDGE, [(358.0, 580.0, "solid")]),
+    _line("toll_split", TOLL_SPLIT, [(467.6, 547.6, "dashed"), (547.6, 580.0, "solid")]),
+    _line("toll_left", TOLL_LEFT_EDGE, [(459.1, 580.0, "solid")]),
+    _line("exit_edge", EXIT_EDGE, [(210.0, 570.0, "solid")]),
 ]
 LANE_TYPE = {"solid": "white_solid", "dashed": "white_dashed"}
+
+
+def island_edge_y(x: float) -> float:
+    """Left edge of the hatched island at x (nan outside it)."""
+    return float(LINES[6].y_at(x))
 
 
 def global_path_y(x: float) -> float:
@@ -146,11 +183,41 @@ def global_path_y(x: float) -> float:
         return LANE_W
     if x < ZONE_END_X:
         return LANE_W + 2*LANE_W*ease((x-355.0)/(ZONE_END_X-355.0))
-    if x < 440.0:
-        return 3*LANE_W
-    if x < 480.0:
-        return 3*LANE_W - 2.5*ease((x-440.0)/40.0)
-    return 3*LANE_W - 2.5
+    # Past the funnel the route takes the right toll lane (A2256W000153);
+    # the first 20 m blend from the L3 centre onto the recorded path.
+    blend = max(0.0, 1.0 - (x - ZONE_END_X)/20.0)
+    tail = float(np.interp(x, [p[0] for p in GLOBAL_TAIL], [p[1] for p in GLOBAL_TAIL]))
+    return tail + blend*(3*LANE_W - GLOBAL_TAIL[0][1])
+
+
+# data/routes/2026_molit_comp_global_path.txt from s 1590, sim frame.
+GLOBAL_TAIL = [(430.0, 10.11), (439.4, 9.89), (449.3, 8.98), (459.3, 7.94), (469.2, 6.86),
+               (479.2, 5.83), (489.2, 5.10), (499.2, 5.04), (509.1, 4.99), (519.1, 4.98),
+               (539.1, 4.95), (559.1, 4.75), (569.1, 4.57), (589.3, 4.55), (800.0, 4.55)]
+
+# Where each lane's NPCs drive in the sample scenario (their end links, sim
+# frame): L1 cars take the exit (A2256W000179/001105) and end at x 399.4, L2
+# cars end on their merge link A2256W000422 at x 387.4 before it bends into
+# L3, L3 cars follow A2256W000432 into the left toll lane and end at x 555.9.
+NPC_PATHS = {
+    1: [(208.4, 3.49), (233.4, 2.08), (258.3, 0.67), (283.3, -0.37), (308.3, -0.39),
+        (357.9, -0.42), (399.4, -0.55)],
+    2: [(357.9, 7.04), (370.4, 7.06), (382.9, 7.12), (387.4, 7.27)],
+    3: [(432.9, 10.48), (457.4, 10.49), (482.4, 9.41), (506.9, 9.07), (531.9, 9.09),
+        (555.9, 9.11)],
+}
+NPC_END_X = {1: 399.4, 2: 387.4, 3: 555.9}
+
+
+def npc_path_y(lane: int, x: float) -> float:
+    path = NPC_PATHS.get(lane)
+    if path is None or x <= path[0][0]:
+        return lane*LANE_W
+    return float(np.interp(x, [p[0] for p in path], [p[1] for p in path]))
+
+
+def npc_path_yaw(lane: int, x: float) -> float:
+    return math.atan2(npc_path_y(lane, x + 0.5) - npc_path_y(lane, x - 0.5), 1.0)
 
 
 GLOBAL_ROAD = [(x, global_path_y(x)) for x in np.arange(-300.0, 800.0, 0.5)]
@@ -169,6 +236,11 @@ class Npc:
     length: float
     width: float
     v_des: float = 0.0
+    lane: int = 0
+
+    @property
+    def yaw(self) -> float:
+        return npc_path_yaw(self.lane, self.x)
 
 
 @dataclass
@@ -259,7 +331,7 @@ def make_traffic(scenario: Scenario, rng: random.Random) -> List[Npc]:
             x = lane.first_x + rng.uniform(0.0, base_v*lane.period_s)
             while x < 900.0:
                 v = base_v*rng.uniform(1.0 - lane.speed_spread, 1.0 + lane.speed_spread)
-                npcs.append(Npc(next_id, x, lane.lane_y, v, 4.6, 1.9, v))
+                npcs.append(Npc(next_id, x, lane.lane_y, v, 4.6, 1.9, v, lane_number(lane.lane_y)))
                 next_id += 1
                 x += base_v*lane.period_s*rng.uniform(1.0 - lane.period_spread,
                                                        1.0 + lane.period_spread)
@@ -269,13 +341,20 @@ def make_traffic(scenario: Scenario, rng: random.Random) -> List[Npc]:
             truck = rng.random() < lane.truck_ratio
             v = (lane.speed_kmh + rng.uniform(-lane.speed_jitter_kmh, lane.speed_jitter_kmh))/3.6
             npcs.append(Npc(next_id, x, lane.lane_y, v, 12.0 if truck else 4.6,
-                            2.5 if truck else 1.9, v))
+                            2.5 if truck else 1.9, v, lane_number(lane.lane_y)))
             next_id += 1
             x += rng.uniform(*lane.spacing) + (8.0 if truck else 0.0)
     for x, y, kmh in scenario.extra_npcs:
-        npcs.append(Npc(next_id, x, y, kmh/3.6, 4.6, 1.9, kmh/3.6))
+        npcs.append(Npc(next_id, x, y, kmh/3.6, 4.6, 1.9, kmh/3.6, lane_number(y)))
         next_id += 1
+    for npc in npcs:
+        npc.y = npc_path_y(npc.lane, npc.x)
+    npcs[:] = [n for n in npcs if n.x < NPC_END_X.get(n.lane, float("inf"))]
     return npcs
+
+
+def lane_number(y: float) -> int:
+    return int(round(y/LANE_W))
 
 
 def update_traffic(npcs: List[Npc], scenario: Scenario, ego_box_center: Tuple[float, float],
@@ -289,15 +368,17 @@ def update_traffic(npcs: List[Npc], scenario: Scenario, ego_box_center: Tuple[fl
     if not scenario.reactive:
         for npc in npcs:
             npc.x += npc.v*dt
+            npc.y = npc_path_y(npc.lane, npc.x)
+        npcs[:] = [n for n in npcs if n.x < NPC_END_X.get(n.lane, float("inf"))]
         return
     cx, cy = ego_box_center
-    lanes: Dict[float, List[Npc]] = {}
+    lanes: Dict[int, List[Npc]] = {}
     for npc in npcs:
-        lanes.setdefault(npc.y, []).append(npc)
+        lanes.setdefault(npc.lane, []).append(npc)
     a_max, b_comf = 1.5, 3.0
-    for lane_y, members in lanes.items():
+    for lane, members in lanes.items():
         members.sort(key=lambda n: n.x)
-        ego_in_lane = abs(cy - lane_y) < 0.5*(EGO_W + 1.9)
+        ego_in_lane = abs(cy - npc_path_y(lane, cx)) < 0.5*(EGO_W + 1.9)
         for i, npc in enumerate(members):
             lead_gap, lead_v = None, None
             if i + 1 < len(members):
@@ -315,6 +396,8 @@ def update_traffic(npcs: List[Npc], scenario: Scenario, ego_box_center: Tuple[fl
                 accel -= a_max*(max(desired, 0.0)/max(lead_gap, 0.1))**2
             npc.v = max(0.0, npc.v + max(-8.0, accel)*dt)
             npc.x += npc.v*dt
+            npc.y = npc_path_y(npc.lane, npc.x)
+    npcs[:] = [n for n in npcs if n.x < NPC_END_X.get(n.lane, float("inf"))]
 
 
 # ---------------------------------------------------------------------------
@@ -428,7 +511,6 @@ class LidarSim:
         self.next_t = t + self.period
         ex, ey, _ = ego_road
         out, seen = [], set()
-        c, s = math.cos(MAP_THETA), math.sin(MAP_THETA)
         for npc in npcs:
             dx = npc.x - ex
             if not -60.0 <= dx <= 80.0 or abs(npc.y - ey) > 18.0:
@@ -438,7 +520,9 @@ class LidarSim:
             # A new Kalman track reports no velocity for its first frames.
             v = 0.0 if self.age[npc.id] <= 2 else npc.v + self.rng.gauss(0.0, 0.2)
             mx, my = road_to_map(npc.x + self.rng.gauss(0, 0.1), npc.y + self.rng.gauss(0, 0.1))
-            out.append(Obstacle(npc.id, mx, my, c*v, s*v, npc.length, npc.width))
+            heading = MAP_THETA + npc.yaw
+            out.append(Obstacle(npc.id, mx, my, math.cos(heading)*v, math.sin(heading)*v,
+                                npc.length, npc.width))
         for oid in list(self.age):
             if oid not in seen:
                 del self.age[oid]
@@ -573,15 +657,15 @@ def run(scenario: Scenario, seed: int, cfg_overrides: Optional[Dict] = None,
     log: List[Dict] = []
     frames: List[Dict] = []
     events: List[Tuple[float, float, str]] = []
-    collisions, solid_touch = [], 0.0
+    collisions, solid_touch, island_s = [], 0.0, 0.0
     touched: Dict[str, float] = {}
-    max_alat, max_head = 0.0, 0.0
+    max_alat, max_head, max_alat_after = 0.0, 0.0, 0.0
     t_zone_start = t_zone_end = None
     v_zone_end = None
     commits = []
     lane_entered_l4 = False
 
-    while t < 90.0 and ex < 520.0:
+    while t < 90.0 and ex < SCORE_END_X + 40.0:
         # ---- sensors ----------------------------------------------------
         mx, my = road_to_map(ex, ey)
         myaw = eyaw + MAP_THETA
@@ -622,9 +706,10 @@ def run(scenario: Scenario, seed: int, cfg_overrides: Optional[Dict] = None,
                     "state": out.state, "reason": out.status.get("reason"),
                     "gap": out.status.get("gap"), "lead": follow.get("lead"),
                     "changes": out.status.get("lane_changes_done", 0), "stop": out.stop,
+                    "deadline": out.status.get("deadline"),
                     "path": [map_to_road(px, py) for px, py in (out.path or [])[::2]],
-                    "npcs": [(n.id, round(n.x, 2), n.y, round(n.v, 2), n.length, n.width)
-                             for n in npcs if abs(n.x - ex) < 170.0],
+                    "npcs": [(n.id, round(n.x, 2), round(n.y, 3), round(n.v, 2), n.length, n.width,
+                              round(n.yaw, 4)) for n in npcs if abs(n.x - ex) < 170.0],
                 })
 
         # ---- adaptive_curvature_purepursuit (20 Hz) ----------------------
@@ -649,26 +734,31 @@ def run(scenario: Scenario, seed: int, cfg_overrides: Optional[Dict] = None,
 
         # ---- scoring ----------------------------------------------------
         a_lat = ev*ev*math.tan(delta)/WHEELBASE
-        if ZONE_START_X - 20 <= ex <= ZONE_END_X + 40:
+        if ZONE_START_X - 20 <= ex <= ZONE_END_X:
             max_alat = max(max_alat, abs(a_lat))
             max_head = max(max_head, abs(math.degrees(eyaw)))
+        elif ZONE_END_X < ex <= SCORE_END_X:
+            # The route itself bends into the right toll lane here.
+            max_alat_after = max(max_alat_after, abs(a_lat))
         if t_zone_start is None and ex >= ZONE_START_X:
             t_zone_start = t
         if t_zone_end is None and ex >= ZONE_END_X:
             t_zone_end, v_zone_end = t, ev
         cx = ex + EGO_CENTER*math.cos(eyaw)
         cy = ey + EGO_CENTER*math.sin(eyaw)
-        # Score up to the hand-over region only: beyond it the global path
-        # leads into the toll plaza, which this straight road does not model.
-        scored = ex <= ZONE_END_X + 20.0
+        # Scored through the funnel and into the toll lanes.
+        scored = ex <= SCORE_END_X
         ego_box = box_corners(cx, cy, eyaw, EGO_L, EGO_W)
         for npc in npcs:
             if scored and abs(npc.x - cx) < 15 and abs(npc.y - cy) < 4:
-                if boxes_overlap(ego_box, box_corners(npc.x, npc.y, 0.0, npc.length, npc.width)):
+                if boxes_overlap(ego_box, box_corners(npc.x, npc.y, npc.yaw, npc.length, npc.width)):
                     if not collisions or collisions[-1]["id"] != npc.id:
                         collisions.append({"t": round(t, 2), "x": round(ex, 1), "id": npc.id})
         if scored and cy > 12.25 - 0.3:
             lane_entered_l4 = True
+        edge = island_edge_y(cx)
+        if scored and math.isfinite(edge) and LANE_W/2 < cy < edge:
+            island_s += dt
         wheels = []
         for ax in (0.0, WHEELBASE):
             for side in (TRACK_HALF, -TRACK_HALF):
@@ -677,7 +767,7 @@ def run(scenario: Scenario, seed: int, cfg_overrides: Optional[Dict] = None,
         touching = False
         for line in LINES:
             for wx, wy in wheels:
-                if line.kind_at(wx) != "solid" or not ZONE_START_X - 40 <= ex <= ZONE_END_X:
+                if line.kind_at(wx) != "solid" or not ZONE_START_X - 40 <= ex <= SCORE_END_X:
                     continue
                 yl = float(line.y_at(wx))
                 if math.isfinite(yl) and abs(wy - yl) < 0.075 + 0.12:
@@ -701,6 +791,7 @@ def run(scenario: Scenario, seed: int, cfg_overrides: Optional[Dict] = None,
         "collisions": collisions,
         "solid_touch_s": round(solid_touch, 2),
         "solid_lines_touched": {k: round(v, 2) for k, v in touched.items()},
+        "island_s": round(island_s, 2),
         "entered_forbidden_lane": lane_entered_l4,
         "lane_changes": len(commits),
         "commits": commits,
@@ -708,6 +799,7 @@ def run(scenario: Scenario, seed: int, cfg_overrides: Optional[Dict] = None,
         else round(t_zone_end - t_zone_start, 2),
         "speed_at_zone_end_kmh": None if v_zone_end is None else round(v_zone_end*3.6, 1),
         "max_lateral_accel_mps2": round(max_alat, 2),
+        "max_lateral_accel_after_mps2": round(max_alat_after, 2),
         "max_heading_deg": round(max_head, 2),
         "final_lane_y": round(ey, 2),
         "handover": handover,
@@ -729,6 +821,8 @@ def verdict(r: Dict) -> List[str]:
         problems.append("collision %s" % r["collisions"][0])
     if r["solid_touch_s"] > 0.0:
         problems.append("solid line touched %.2fs %s" % (r["solid_touch_s"], r["solid_lines_touched"]))
+    if r.get("island_s", 0.0) > 0.0:
+        problems.append("drove onto the hatched island %.2fs (lane ended)" % r["island_s"])
     if r["entered_forbidden_lane"]:
         problems.append("entered forbidden lane")
     if r["handover"] is None:
@@ -739,9 +833,20 @@ def verdict(r: Dict) -> List[str]:
         problems.append("zone end speed %.1f km/h" % r["speed_at_zone_end_kmh"])
     if r["max_lateral_accel_mps2"] > 2.5:
         problems.append("lateral accel %.2f" % r["max_lateral_accel_mps2"])
+    # Past the zone end the route's own bend into the toll lane takes up to
+    # the controller's limit (3.8 with the mission preset); more is a swerve.
+    if r.get("max_lateral_accel_after_mps2", 0.0) > 4.0:
+        problems.append("lateral accel %.2f after the zone end" % r["max_lateral_accel_after_mps2"])
     if r["max_route_offset_m"] >= MAX_ROUTE_OFFSET_M:
         problems.append("route offset %.2f m: route_mission_gate stops the car" % r["max_route_offset_m"])
     return problems
+
+
+def draw_island(ax) -> None:
+    """Hatch the island between the right edge and its left edge."""
+    xs = [p[0] for p in ISLAND_EDGE]
+    ax.fill_between(xs, [LANE_W/2]*len(xs), [p[1] for p in ISLAND_EDGE], facecolor="none",
+                    edgecolor="0.6", hatch="///", lw=0.0, zorder=1)
 
 
 def plot(result: Dict, path: str) -> None:
@@ -763,6 +868,7 @@ def plot(result: Dict, path: str) -> None:
             yy = line.y_at(xx)
             ax1.plot(xx, yy, color="black" if kind == "solid" else "0.5",
                      ls="-" if kind == "solid" else (0, (5, 5)), lw=1.4 if kind == "solid" else 1.0)
+    draw_island(ax1)
     gx = np.array([p[0] for p in GLOBAL_ROAD])
     gy = np.array([p[1] for p in GLOBAL_ROAD])
     m = (gx > -120) & (gx < 560)
@@ -826,6 +932,7 @@ def view(result: Dict, gif_path: str = "", fps: int = 10, window: Tuple[float, f
             xx = np.linspace(max(xa, -150), min(xb, 600), 400)
             ax.plot(xx, line.y_at(xx), color="black" if kind == "solid" else "0.55",
                     ls="-" if kind == "solid" else (0, (6, 6)), lw=1.6 if kind == "solid" else 1.2)
+    draw_island(ax)
     gx = np.array([p[0] for p in GLOBAL_ROAD])
     ax.plot(gx, [p[1] for p in GLOBAL_ROAD], color="red", lw=1.0, alpha=0.35, label="global path")
     for xz, name in ((ZONE_START_X, "zone start"), (ZONE_END_X, "zone end")):
@@ -877,9 +984,9 @@ def view(result: Dict, gif_path: str = "", fps: int = 10, window: Tuple[float, f
             if npc is None:
                 patch.set_visible(False)
                 continue
-            _, nx, ny, nv, nl, nw = npc
+            _, nx, ny, nv, nl, nw, nyaw = npc
             patch.set_visible(True)
-            patch.set_xy(box_corners(nx, ny, 0.0, nl, nw))
+            patch.set_xy(box_corners(nx, ny, nyaw, nl, nw))
             patch.set_color("red" if oid == blocker else "darkorange" if oid == f["lead"]
                             else "0.45" if ny > 12.5 else "0.72")
         if f["path"]:
@@ -955,7 +1062,10 @@ def main(argv=None) -> int:
     overrides = {}
     for item in args.set:
         key, value = item.split("=", 1)
-        overrides[key] = float(value)
+        try:
+            overrides[key] = float(value)
+        except ValueError:
+            overrides[key] = value          # e.g. --set deadline_mode=yield
     names = (list(SCENARIOS) if args.scenario == "all" else
              list(STRESS) if args.scenario == "stress" else [args.scenario])
     unknown = [n for n in names if n not in ALL_SCENARIOS]

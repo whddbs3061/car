@@ -161,6 +161,22 @@ class OvertakeConfig:
     # offset above this is logged (the ego did not reach the final lane).
     handover_warn_m: float = 1.0
 
+    # The zone end is a lane funnel: lanes short of the final one end there.
+    # Within deadline_window_m of the last point where a change still fits,
+    # deadline_mode decides how the ego gets out of such a lane:
+    #   off    keep chasing a gap ahead; otherwise hand over at the zone end
+    #          (the first design)
+    #   yield  slow to the end speed, and below a blocking target-lane car to
+    #          merge behind it
+    #   force  slow to the end speed; at the last point commit unless a
+    #          target-lane car is alongside the slot right now
+    #   both   yield, and force at the last point
+    deadline_mode: str = "yield"
+    deadline_window_m: float = 100.0
+    yield_speed_drop_mps: float = 3.0
+    yield_min_speed_mps: float = 8.0
+    force_margin_m: float = 6.0
+
     @classmethod
     def from_mapping(cls, values: Dict) -> "OvertakeConfig":
         config = cls()
@@ -776,6 +792,7 @@ class HighwayOvertakePlanner:
         self.last_step: Optional[float] = None
         self.last_gap: Optional[GapDecision] = None
         self.reject_since: Optional[float] = None
+        self.deadline = False
 
     # ----- inputs -------------------------------------------------------
     def on_odom(self, t: float, x: float, y: float, yaw: float, speed: float) -> None:
@@ -994,7 +1011,13 @@ class HighwayOvertakePlanner:
         if abs(turn) > math.radians(cfg.ref_heading_reject_deg):
             return False, "heading_jump_%.1fdeg" % math.degrees(turn)
         if mode == "reacquire":
-            if abs(shift) > cfg.reacquire_tolerance_m:
+            # The frozen frame drifts with its heading error, so past the
+            # planned end the lane the ego occupies is the new lane (and
+            # nearer the frozen target than the source lane is).
+            past_end = self.plan is not None and s_old >= self.plan.s_end
+            inside = (abs(d_new) < 0.5*width - cfg.lane_hysteresis_m
+                      and abs(shift) < 0.5*cfg.lane_width_default_m)
+            if abs(shift) > cfg.reacquire_tolerance_m and not (past_end and inside):
                 return False, "not_target_lane_%.2fm" % shift
             self.ref, self.width = new, width
             return True, "reacquired"
@@ -1135,9 +1158,14 @@ class HighwayOvertakePlanner:
             events.append("final lane reached (changes=%d, left=%s): follow only"
                           % (self.lane_index, status["left_type"]))
 
+        if self.state == self.CHASE and not self.deadline and self._deadline_near(route_s, ev):
+            self.deadline = True
+            events.append("lane ends ahead: deadline mode '%s'" % cfg.deadline_mode)
         preview = self.plan.target_d if self.state == self.CHANGE else None
         follow_v, emergency, follow = self._follow(tracks, ego_s, ego_d, ev, preview)
         caps = self._speed_caps(route_s, tracks_fresh)
+        if self.deadline and self.state == self.CHASE:
+            caps["deadline"] = cfg.end_speed_mps       # a slower change is shorter
         free_speed = min(caps.values())
         if self.state == self.CHANGE:
             caps["plan"] = self.plan.v_plan
@@ -1145,6 +1173,7 @@ class HighwayOvertakePlanner:
         target = v_cap if follow_v is None else min(v_cap, follow_v)
         status["caps"] = {k: round(v, 2) for k, v in caps.items()}
         status["follow"] = follow
+        status["deadline"] = self.deadline
 
         path: Optional[List[Point]] = None
         ahead = max(cfg.path_min_ahead_m, cfg.path_ahead_time_s*max(ev, target))
@@ -1174,6 +1203,10 @@ class HighwayOvertakePlanner:
                     reason = "no_room_before_zone_end"
                 else:
                     decision = evaluate_change(plan, ego_s, ev, tracks, cfg)
+                    if (not decision.ok and self.deadline and cfg.deadline_mode in ("force", "both")
+                            and room < (plan.s_end - ego_s) + cfg.room_margin_m + cfg.force_margin_m
+                            and self._slot_clear(ego_s, tracks)):
+                        decision = GapDecision(True, "forced_at_lane_end")
                     self.last_gap = decision
                     status["gap"] = decision.as_dict()
                     if decision.ok:
@@ -1183,12 +1216,21 @@ class HighwayOvertakePlanner:
                             self.plan = plan
                             self.state = self.CHANGE
                             self.confirm_ticks = 0
+                            self.deadline = False
                             events.append(
                                 "LANE CHANGE %d->%d committed: v=%.1f plan_v=%.1f length=%.0fm "
-                                "ramp=%.2f d0=%+.2f" % (self.lane_index, self.lane_index+1, ev,
-                                                         v_plan, plan.length, plan.ramp, ego_d))
+                                "ramp=%.2f d0=%+.2f%s" % (
+                                    self.lane_index, self.lane_index+1, ev, v_plan, plan.length,
+                                    plan.ramp, ego_d, "" if decision.reason == "clear"
+                                    else " (" + decision.reason + ")"))
                     else:
                         reason = "gap_" + decision.reason
+                        yield_v = (self._yield_speed(decision, tracks, ev)
+                                   if self.deadline and cfg.deadline_mode in ("yield", "both")
+                                   else None)
+                        if yield_v is not None:
+                            target = min(target, yield_v)
+                            status["caps"]["yield"] = round(yield_v, 2)
             if not reason.startswith("gap_clear"):
                 self.confirm_ticks = 0
             status["reason"] = reason
@@ -1244,6 +1286,39 @@ class HighwayOvertakePlanner:
         ]
         out.status = status
         return out
+
+    def _deadline_near(self, route_s: float, ev: float) -> bool:
+        """Within deadline_window_m of the last point where a change fits."""
+        cfg = self.cfg
+        if cfg.deadline_mode not in ("yield", "force", "both"):
+            return False
+        length, _ = change_geometry(self.target_offset(), max(ev, cfg.end_speed_mps), cfg)
+        slack = (cfg.zone_end_s - route_s) - (cfg.change_start_m + length + cfg.room_margin_m)
+        return slack < cfg.deadline_window_m
+
+    def _yield_speed(self, decision: GapDecision, tracks: Optional[List[LaneTrack]],
+                     ev: float) -> Optional[float]:
+        """Speed that lets the blocking target-lane car get ahead of the ego:
+        below it, and below the ego's own speed while a faster one closes in."""
+        if decision.reason not in ("target_front", "target_rear"):
+            return None
+        blocker = next((t for t in tracks or [] if t.id == decision.blocker), None)
+        if blocker is None:
+            return None
+        return max(self.cfg.yield_min_speed_mps,
+                   min(blocker.v, ev) - self.cfg.yield_speed_drop_mps)
+
+    def _slot_clear(self, ego_s: float, tracks: Optional[List[LaneTrack]]) -> bool:
+        """No target-lane car overlaps the ego's slot (bumper minima) right now."""
+        cfg = self.cfg
+        for trk in tracks or []:
+            if trk.lane != 1:
+                continue
+            front_gap = (trk.s - 0.5*trk.length) - (ego_s + cfg.front_extent_m)
+            rear_gap = (ego_s + cfg.rear_extent_m) - (trk.s + 0.5*trk.length)
+            if front_gap < cfg.gap_front_min_m and rear_gap < cfg.gap_rear_min_m:
+                return False
+        return True
 
     def _hold_path(self, ref: LaneReference, ego_s: float, ego_d: float, ego_yaw: float,
                    speed: float, ahead: float) -> List[Point]:
