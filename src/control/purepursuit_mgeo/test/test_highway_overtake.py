@@ -209,5 +209,25 @@ class SimulatorSmokeTest(unittest.TestCase):
             self.assertLess(result["max_route_offset_m"], sim.MAX_ROUTE_OFFSET_M - 2.0)
 
 
+class LaneFunnelTest(unittest.TestCase):
+    """The zone end is a lane funnel (MGeo): L1/L2 end on a hatched island."""
+
+    def test_yield_merges_before_the_island(self):
+        import highway_overtake_sim as sim
+        scenario = sim.ALL_SCENARIOS["morai"]
+        held = sim.run(scenario, 3, {"deadline_mode": "off"}, record=False, controller="example")
+        self.assertGreater(held["island_s"], 0.0)          # the first design drives onto it
+        yielded = sim.run(scenario, 3, record=False, controller="example")
+        self.assertEqual(sim.verdict(yielded), [])
+        self.assertEqual(yielded["lane_changes"], 3)
+
+    def test_drifted_frame_is_reacquired(self):
+        # Frozen frame ~0.5 deg off: re-measurement failed for 130 m before.
+        import highway_overtake_sim as sim
+        r = sim.run(sim.ALL_SCENARIOS["morai_camera_noise"], 6, record=False, controller="example")
+        self.assertEqual(sim.verdict(r), [])
+        self.assertTrue(any("new lane 3 measured" in e[2] for e in r["events"]))
+
+
 if __name__ == "__main__":
     unittest.main()
