@@ -112,7 +112,7 @@
       {
         "suite": "src/control/purepursuit_mgeo/test",
         "exit_code": 0,
-        "tests": 105
+        "tests": 106
       },
       {
         "suite": "src/mission/mission_evaluator/test",
@@ -120,7 +120,7 @@
         "tests": 66
       }
     ],
-    "total_tests": 534,
+    "total_tests": 535,
     "ros_build": false,
     "morai_driving": false,
     "live_competition_packet_verified": false
@@ -352,7 +352,7 @@
       "different_from_main": 24,
       "missing_from_main": 54
     },
-    "integration": "main Frenet planner + bypass guard + path manager feed Escape4 and one adaptive secondary controller",
+    "integration": "ZIP Frenet avoidance and Escape4 highway remain separate situations, paths and controllers; one fail-closed authority mux selects them",
     "obsolete_parallel_roundabout_driver_imported": false,
     "command_mux_fail_closed": true,
     "udp_ports": {

@@ -33,8 +33,7 @@ class CurvatureLaunchValidationTest(unittest.TestCase):
 
     def test_highway_nodes_are_required_when_enabled(self):
         names = (self.base_names() + sorted(check.ROUNDABOUT_REQUIRED) +
-                 sorted(check.HIGHWAY_NODES | check.HIGHWAY_BASE_NODES |
-                        check.SECONDARY_CONTROL_NODES))
+                 sorted(check.HIGHWAY_NODES | check.MUX_NODES))
         check.validate_curvature_names(names, '\n'.join(names), roundabout_enabled=True,
                                        highway_enabled=True)
         partial = [n for n in names if n != '/highway_command_mux']
@@ -44,8 +43,7 @@ class CurvatureLaunchValidationTest(unittest.TestCase):
 
     def test_highway_keeps_the_lidar_without_the_roundabout(self):
         names = (self.base_names() + sorted(check.ROUNDABOUT_LIDAR_NODES) +
-                 sorted(check.HIGHWAY_NODES | check.HIGHWAY_BASE_NODES |
-                        check.SECONDARY_CONTROL_NODES))
+                 sorted(check.HIGHWAY_NODES | check.MUX_NODES))
         check.validate_curvature_names(names, '\n'.join(names), roundabout_enabled=False,
                                        highway_enabled=True)
 
@@ -54,20 +52,23 @@ class CurvatureLaunchValidationTest(unittest.TestCase):
         with self.assertRaises(AssertionError):
             check.validate_curvature_names(names, '\n'.join(names), roundabout_enabled=False)
 
-    def test_avoidance_reuses_secondary_controller_and_lidar(self):
+    def test_avoidance_uses_its_own_controller_and_lidar(self):
         names = (self.base_names() + sorted(check.ROUNDABOUT_LIDAR_NODES) +
-                 sorted(check.AVOIDANCE_NODES | check.SECONDARY_CONTROL_NODES))
+                 sorted(check.AVOIDANCE_NODES | check.MUX_NODES))
         check.validate_curvature_names(names, '\n'.join(names), roundabout_enabled=False,
                                        avoidance_enabled=True)
 
-    def test_highway_with_avoidance_does_not_start_parallel_base_node(self):
+    def test_highway_and_avoidance_keep_both_independent_controllers(self):
         names = (self.base_names() + sorted(check.ROUNDABOUT_REQUIRED) +
                  sorted(check.AVOIDANCE_NODES | check.HIGHWAY_NODES |
-                        check.SECONDARY_CONTROL_NODES))
+                        check.MUX_NODES))
         check.validate_curvature_names(names, '\n'.join(names), roundabout_enabled=True,
                                        highway_enabled=True, avoidance_enabled=True)
         with self.assertRaises(AssertionError):
-            check.validate_curvature_names(names + ['/highway_base_path'], '\n'.join(names),
+            check.validate_curvature_names(
+                                           [n for n in names
+                                            if n != '/avoidance_curvature_purepursuit'],
+                                           '\n'.join(names),
                                            roundabout_enabled=True, highway_enabled=True,
                                            avoidance_enabled=True)
 

@@ -19,17 +19,17 @@ ZIP의 별도 roundabout test driver와 구형 command selector는 넣지 않았
 ## 최종 제어권
 
 1. 일반 구간: 기존 `curvature_speed_purepursuit`
-2. 장애물 회피 상태: `avoidance_path_manager` 경로를 같은 메인 제어 파라미터의
-   보조 곡률 제어기가 추종
-3. 고속도로 구간: Escape4가 회피 관리 경로 위에서 차선 변경·추월·복귀를 수행하고
-   같은 보조 제어기가 추종
-4. `highway_command_mux`가 한 명령만 `/control/ctrl_cmd`로 전달
+2. 장애물 회피 상태: `avoidance_path_manager` 경로를 메인 제어 파라미터와 맞춘
+   전용 회피 곡률 제어기가 추종
+3. 고속도로 구간: Escape4가 기존 고속도로 base 경로에서 차선 변경·추월·복귀를
+   수행하고 고속도로 전용 제어기가 추종
+4. `highway_command_mux`가 상황에 맞는 한 명령만 `/control/ctrl_cmd`로 전달
 5. 기존 신호/정지선 fusion이 최종 `/ctrl_cmd`를 생성
 
-고속도로가 회피를 덮어쓰는 병렬 구조가 아니다. 회피 관리 경로가 Escape4의 base
-경로가 되며, Escape4 구간 밖에서 회피 상태가 `NORMAL`일 때만 기존 메인 명령으로
-돌아간다. 필요한 상태나 선택된 명령이 오래되면 메인 명령으로 몰래 복귀하지 않고
-전제동한다.
+ZIP 회피와 Escape4는 서로 다른 상황이다. 회피 경로를 Escape4 base 경로로 넣지
+않는다. 고속도로 phase가 활성화된 구간에는 고속도로 제어기가 우선하고, 그 밖에서
+회피 상태가 활성화되면 회피 제어기가 명령권을 가진다. 둘 다 비활성이면 기존 메인
+명령으로 돌아간다. 필요한 상태나 선택된 명령이 오래되면 전제동한다.
 
 ## UDP 포트
 
@@ -44,6 +44,8 @@ ZIP의 별도 roundabout test driver와 구형 command selector는 넣지 않았
 `collision_source_port:=0`으로 검사를 명시적으로 끌 수 있다.
 
 ## 실행
+
+전체 실행 명령은 [merged 브랜치 실행 방법](MERGED_RUN_KO.md)을 따른다.
 
 ```bash
 cd ~/car/morai_ws/docker/final_ws

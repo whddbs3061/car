@@ -28,6 +28,8 @@ IP는 Ubuntu `192.168.0.185`, MORAI `192.168.0.147` 기준입니다.
 [escape4 병합 안내](morai_ws/docs/HIGHWAY_ESCAPE4_KO.md)를 참고하세요.
 `merged` 브랜치의 메인 주행·회전교차로·Escape4·장애물 회피 결합과 UDP 포트는
 [merged 통합 안내](morai_ws/docs/MERGED_AVOIDANCE_HIGHWAY_KO.md)를 참고하세요.
+실행 명령만 순서대로 보려면
+[merged 브랜치 실행 방법](morai_ws/docs/MERGED_RUN_KO.md)을 사용하세요.
 
 카메라 포트는 다음으로 통일합니다.
 

@@ -35,18 +35,19 @@ ROUNDABOUT_LIDAR_NODES = {
     '/morai_lidar_udp_source',
     '/roundabout_lidar_tracking',
 }
-# enable_highway: escape4 owns the managed path inside its route section.
-HIGHWAY_NODES = {'/highway_lane_strategy'}
-SECONDARY_CONTROL_NODES = {
+# Escape4 and ZIP avoidance remain separate situations/controllers.
+HIGHWAY_NODES = {
+    '/highway_base_path',
+    '/highway_lane_strategy',
     '/highway_curvature_purepursuit',
-    '/highway_command_mux',
 }
-HIGHWAY_BASE_NODES = {'/highway_base_path'}
 AVOIDANCE_NODES = {
     '/avoidance_frenet_debug',
     '/bypass_lane_guard',
     '/avoidance_path_manager',
+    '/avoidance_curvature_purepursuit',
 }
+MUX_NODES = {'/highway_command_mux'}
 
 
 def validate_curvature_names(names, output, roundabout_enabled, highway_enabled=False,
@@ -57,16 +58,14 @@ def validate_curvature_names(names, output, roundabout_enabled, highway_enabled=
     optional = set()
     if highway_enabled:
         optional |= HIGHWAY_NODES
-    if highway_enabled or avoidance_enabled:
-        optional |= SECONDARY_CONTROL_NODES
-    if highway_enabled and not avoidance_enabled:
-        optional |= HIGHWAY_BASE_NODES
     if avoidance_enabled:
         optional |= AVOIDANCE_NODES
+    if highway_enabled or avoidance_enabled:
+        optional |= MUX_NODES
     for excluded in CURVATURE_EXCLUDED - optional:
         assert excluded not in names, (excluded, output)
     expected_optional = optional
-    known_optional = HIGHWAY_NODES | SECONDARY_CONTROL_NODES | HIGHWAY_BASE_NODES | AVOIDANCE_NODES
+    known_optional = HIGHWAY_NODES | AVOIDANCE_NODES | MUX_NODES
     present_optional = known_optional.intersection(names)
     assert present_optional == expected_optional, (
         'optional nodes mismatch', 'missing', expected_optional - present_optional,

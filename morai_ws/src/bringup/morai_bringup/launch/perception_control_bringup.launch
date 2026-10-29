@@ -5,6 +5,7 @@
   <arg name="path_file" default="$(arg workspace_path)/data/routes/2026_molit_comp_global_path.txt" />
   <arg name="morai_host_ip" default="192.168.0.147" />
   <arg name="ego_status_port" default="9099" />
+  <arg name="ego_status_source_port" default="9088" />
   <arg name="control_remote_port" default="9093" />
   <arg name="control_source_port" default="9094" />
   <arg name="enable_control" default="false" />
@@ -101,6 +102,7 @@
     <arg name="path_file" value="$(arg path_file)" />
     <arg name="morai_host_ip" value="$(arg morai_host_ip)" />
     <arg name="ego_status_port" value="$(arg ego_status_port)" />
+    <arg name="ego_status_source_port" value="$(arg ego_status_source_port)" />
     <arg name="control_remote_port" value="$(arg control_remote_port)" />
     <arg name="control_source_port" value="$(arg control_source_port)" />
     <arg name="enable_control" value="$(arg enable_control)" />

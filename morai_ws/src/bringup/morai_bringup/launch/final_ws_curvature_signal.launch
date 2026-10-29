@@ -391,6 +391,65 @@
     <param name="threat_clear_confirm_s" value="0.40" />
     <param name="threat_clear_max_abs_d_m" value="0.55" />
   </node>
+  <!-- ZIP avoidance is a non-highway situation and owns a separate controller.
+       It uses the main route speed/control parameters, never Escape4's caps. -->
+  <node if="$(arg enable_obstacle_avoidance)" pkg="curvature_speed_purepursuit"
+        type="adaptive_curvature_purepursuit_node.py"
+        name="avoidance_curvature_purepursuit" output="screen">
+    <param name="path_file" value="$(arg path_file)" />
+    <param name="pose_topic" value="/localization/odometry" />
+    <param name="command_topic" value="/control/ctrl_cmd_avoidance" />
+    <param name="publish_command" value="true" />
+    <param name="use_active_path" value="true" />
+    <param name="require_active_path" value="true" />
+    <param name="active_path_topic" value="/avoidance_path_manager/active_path" />
+    <param name="trajectory_topic" value="/avoidance_path_manager/trajectory" />
+    <param name="active_path_timeout_sec" value="$(arg managed_timeout_s)" />
+    <param name="stop_required_topic" value="/avoidance_path_manager/stop_required" />
+    <param name="require_fresh_stop_status" value="true" />
+    <param name="stop_status_timeout_sec" value="$(arg managed_timeout_s)" />
+    <param name="use_target_speed_override" value="false" />
+    <param name="enable_merge_gate" value="false" />
+    <param name="require_route_mission_ready" value="false" />
+    <param name="longl_cmd_type" value="1" />
+    <param name="max_speed_kph" value="$(arg max_speed_kph)" />
+    <param name="vehicle_speed_topic" value="$(arg vehicle_speed_topic)" />
+    <param name="require_vehicle_speed" value="$(arg require_vehicle_speed)" />
+    <param name="vehicle_speed_timeout_sec" value="$(arg vehicle_speed_timeout_sec)" />
+    <param name="lateral_accel_limit_mps2" value="$(arg curve_lateral_accel_limit_mps2)" />
+    <param name="max_accel_mps2" value="$(arg max_accel_mps2)" />
+    <param name="max_decel_mps2" value="$(arg max_decel_mps2)" />
+    <param name="speed_kp" value="$(arg speed_kp)" />
+    <param name="speed_ki" value="$(arg speed_ki)" />
+    <param name="pedal_accel_rise_rate_per_sec" value="$(arg pedal_accel_rise_rate_per_sec)" />
+    <param name="pedal_brake_rise_rate_per_sec" value="$(arg pedal_brake_rise_rate_per_sec)" />
+    <param name="pedal_release_rate_per_sec" value="$(arg pedal_release_rate_per_sec)" />
+    <param name="speed_integral_limit_kph_s" value="$(arg speed_integral_limit_kph_s)" />
+    <param name="speed_error_deadband_kph" value="$(arg speed_error_deadband_kph)" />
+    <param name="lookahead_min_m" value="$(arg lookahead_min_m)" />
+    <param name="lookahead_gain" value="$(arg lookahead_gain)" />
+    <param name="lookahead_max_m" value="$(arg lookahead_max_m)" />
+    <param name="lookahead_tight_min_m" value="$(arg lookahead_tight_min_m)" />
+    <param name="lookahead_curvature_gain" value="$(arg lookahead_curvature_gain)" />
+    <param name="steering_feedforward_weight" value="$(arg steering_feedforward_weight)" />
+    <param name="max_steering_rate_rad_s" value="$(arg max_steering_rate_rad_s)" />
+    <param name="wheelbase_m" value="$(arg wheelbase_m)" />
+    <param name="max_steering_rad" value="$(arg max_steering_rad)" />
+    <param name="steering_sign" value="$(arg steering_sign)" />
+    <remap from="/control/curvature_status" to="/avoidance_control/curvature_status" />
+    <remap from="/experimental/active_path_seq" to="/avoidance_control/active_path_seq" />
+    <remap from="/experimental/active_path_source" to="/avoidance_control/active_path_source" />
+    <remap from="/experimental/active_reference_path" to="/avoidance_control/active_reference_path" />
+    <remap from="/experimental/curvature_accel_command" to="/avoidance_control/curvature_accel_command" />
+    <remap from="/experimental/curvature_brake_command" to="/avoidance_control/curvature_brake_command" />
+    <remap from="/experimental/curvature_lookahead_point" to="/avoidance_control/curvature_lookahead_point" />
+    <remap from="/experimental/curvature_progress" to="/avoidance_control/curvature_progress" />
+    <remap from="/experimental/curvature_reference_path" to="/avoidance_control/curvature_reference_path" />
+    <remap from="/experimental/curvature_speed_command" to="/avoidance_control/curvature_speed_command" />
+    <remap from="/experimental/curvature_speed_limit" to="/avoidance_control/curvature_speed_limit" />
+    <remap from="/experimental/curvature_steering" to="/avoidance_control/curvature_steering" />
+    <remap from="/experimental/curvature_value" to="/avoidance_control/curvature_value" />
+  </node>
 
   <!-- Highway section.  highway_lane_strategy (escape4) changes lanes in the
        camera lane frame from the zone entry to the zone end, then passes the
@@ -398,7 +457,7 @@
        controller follows that path and speed; highway_command_mux sends its
        command to the fusion instead of the main controller's from the zone
        entry to the highway end.  The main controller keeps running throughout. -->
-  <node if="$(eval arg('enable_highway') and not arg('enable_obstacle_avoidance'))" pkg="purepursuit_mgeo" type="highway_base_path_node.py"
+  <node if="$(arg enable_highway)" pkg="purepursuit_mgeo" type="highway_base_path_node.py"
         name="highway_base_path" output="screen">
     <param name="path_file" value="$(arg path_file)" />
     <param name="odom_topic" value="/localization/odometry" />
@@ -415,9 +474,9 @@
     <param name="obstacle_topic" value="/perception/lidar/tracked_obstacles_map" />
     <param name="lane_info_topic" value="/perception/camera/lane_info" />
     <param name="cruise_speed_mps" value="$(eval float(arg('max_speed_kph')) / 3.6)" />
-    <param name="base_path_topic" value="$(eval '/avoidance_path_manager/active_path' if arg('enable_obstacle_avoidance') else '/highway_lane_strategy/base_path')" />
-    <param name="base_stop_topic" value="$(eval '/avoidance_path_manager/stop_required' if arg('enable_obstacle_avoidance') else '/highway_lane_strategy/base_stop')" />
-    <param name="base_trajectory_topic" value="$(eval '/avoidance_path_manager/trajectory' if arg('enable_obstacle_avoidance') else '')" />
+    <param name="base_path_topic" value="/highway_lane_strategy/base_path" />
+    <param name="base_stop_topic" value="/highway_lane_strategy/base_stop" />
+    <param name="base_trajectory_topic" value="" />
     <param name="route_gate_required" value="false" />
     <param name="controller_lateral_accel_limit_mps2" value="$(arg highway_lateral_accel_mps2)" />
     <param name="controller_max_accel_mps2" value="$(arg max_accel_mps2)" />
@@ -426,7 +485,7 @@
     <param name="highway_max_speed_mps" value="$(eval float(arg('highway_max_speed_kph')) / 3.6)" />
     <param name="highway_end_s" value="$(arg highway_end_s)" />
   </node>
-  <node if="$(eval arg('enable_highway') or arg('enable_obstacle_avoidance'))" pkg="purepursuit_mgeo" type="curvature_pp_overtake_node.py"
+  <node if="$(arg enable_highway)" pkg="purepursuit_mgeo" type="curvature_pp_overtake_node.py"
         name="highway_curvature_purepursuit" output="screen">
     <param name="path_file" value="$(arg path_file)" />
     <param name="pose_topic" value="/localization/odometry" />
@@ -434,13 +493,13 @@
     <param name="publish_command" value="true" />
     <param name="use_active_path" value="true" />
     <param name="require_active_path" value="true" />
-    <param name="active_path_topic" value="$(eval '/highway_lane_strategy/active_path' if arg('enable_highway') else '/avoidance_path_manager/active_path')" />
-    <param name="trajectory_topic" value="$(eval '/highway_lane_strategy/trajectory' if arg('enable_highway') else '/avoidance_path_manager/trajectory')" />
+    <param name="active_path_topic" value="/highway_lane_strategy/active_path" />
+    <param name="trajectory_topic" value="/highway_lane_strategy/trajectory" />
     <param name="active_path_timeout_sec" value="$(arg managed_timeout_s)" />
-    <param name="stop_required_topic" value="$(eval '/highway_lane_strategy/stop_required' if arg('enable_highway') else '/avoidance_path_manager/stop_required')" />
+    <param name="stop_required_topic" value="/highway_lane_strategy/stop_required" />
     <param name="require_fresh_stop_status" value="true" />
     <param name="stop_status_timeout_sec" value="$(arg managed_timeout_s)" />
-    <param name="use_target_speed_override" value="$(arg enable_highway)" />
+    <param name="use_target_speed_override" value="true" />
     <param name="target_speed_override_topic" value="/highway_lane_strategy/target_speed_mps" />
     <param name="enable_merge_gate" value="false" />
     <param name="require_route_mission_ready" value="false" />
@@ -485,6 +544,7 @@
         name="highway_command_mux" output="screen">
     <param name="main_command_topic" value="/control/ctrl_cmd_main" />
     <param name="highway_command_topic" value="/control/ctrl_cmd_highway" />
+    <param name="avoidance_command_topic" value="/control/ctrl_cmd_avoidance" />
     <param name="output_topic" value="/control/ctrl_cmd" />
     <param name="state_topic" value="/highway_lane_strategy/state" />
     <param name="avoidance_state_topic" value="/avoidance_path_manager/state" />

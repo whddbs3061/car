@@ -18,7 +18,9 @@ class CurvatureSignalLaunchTest(unittest.TestCase):
     def test_single_signal_overlay_and_fixed_path_controller(self):
         types = {n.get("type") for n in self.root.findall("node")}
         self.assertNotIn("stopline_controller.py", types)  # Must not veto a permitted left arrow.
-        self.assertNotIn("adaptive_curvature_purepursuit_node.py", types)
+        avoidance = self.root.find("node[@name='avoidance_curvature_purepursuit']")
+        self.assertEqual(avoidance.get("type"), "adaptive_curvature_purepursuit_node.py")
+        self.assertEqual(avoidance.get("if"), "$(arg enable_obstacle_avoidance)")
         pp = self.root.find("node[@type='curvature_speed_purepursuit_node.py']")
         # The shared mux forwards it when either highway or avoidance is enabled.
         self.assertEqual(self.param(pp, "command_topic"),
