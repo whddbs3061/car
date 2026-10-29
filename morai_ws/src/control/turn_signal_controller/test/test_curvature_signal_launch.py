@@ -20,9 +20,9 @@ class CurvatureSignalLaunchTest(unittest.TestCase):
         self.assertNotIn("stopline_controller.py", types)  # Must not veto a permitted left arrow.
         self.assertNotIn("adaptive_curvature_purepursuit_node.py", types)
         pp = self.root.find("node[@type='curvature_speed_purepursuit_node.py']")
-        # With enable_highway highway_command_mux forwards it to /control/ctrl_cmd.
+        # The shared mux forwards it when either highway or avoidance is enabled.
         self.assertEqual(self.param(pp, "command_topic"),
-                         "$(eval '/control/ctrl_cmd_main' if arg('enable_highway') else '/control/ctrl_cmd')")
+                         "$(eval '/control/ctrl_cmd_main' if (arg('enable_highway') or arg('enable_obstacle_avoidance')) else '/control/ctrl_cmd')")
         self.assertEqual(self.param(pp, "stopline_speed_cap_enabled"), "false")
         self.assertEqual(self.param(pp, "stopline_approach_speed_kph"), "$(arg stopline_approach_speed_kph)")
         self.assertEqual(self.param(self.fusion, "nominal_command_topic"), "/control/ctrl_cmd")

@@ -26,8 +26,9 @@
   },
   "status_contract": {
     "source": "Competition Vehicle Status",
-    "ubuntu_udp_receive_port": 9081,
-    "port_source": "user request; personal test profile, not verified organiser forwarding target",
+    "simulator_udp_source_port": 9088,
+    "ubuntu_udp_receive_port": 9099,
+    "port_source": "user request for merged branch; not live-verified",
     "layouts_bytes": [
       181,
       229
@@ -106,12 +107,12 @@
       {
         "suite": "src/control/turn_signal_controller/test",
         "exit_code": 0,
-        "tests": 221
+        "tests": 232
       },
       {
         "suite": "src/control/purepursuit_mgeo/test",
         "exit_code": 0,
-        "tests": 81
+        "tests": 105
       },
       {
         "suite": "src/mission/mission_evaluator/test",
@@ -119,7 +120,7 @@
         "tests": 66
       }
     ],
-    "total_tests": 499,
+    "total_tests": 534,
     "ros_build": false,
     "morai_driving": false,
     "live_competition_packet_verified": false
@@ -335,6 +336,34 @@
     ],
     "circulating_conflict_indices": [42, 52],
     "lidar_udp_port": 2001,
+    "ros_build_verified": false,
+    "morai_driving_verified": false
+  },
+  "merged_20261030": {
+    "main_repository": "https://github.com/whddbs3061/car",
+    "base_branch": "test/roundabout-highway",
+    "base_commit": "4259fc184149bc9b3c53f6b929e8a21754febeee",
+    "result_branch": "merged",
+    "source_archive": "morai_v7_avoidance_sources.zip",
+    "source_archive_sha256": "EB47FB5A857723AFA3279322216BA25547B45D7735E973B2F9401E70A2FB8AD9",
+    "canonical_file_audit": {
+      "archive_files": 209,
+      "identical_to_main": 131,
+      "different_from_main": 24,
+      "missing_from_main": 54
+    },
+    "integration": "main Frenet planner + bypass guard + path manager feed Escape4 and one adaptive secondary controller",
+    "obsolete_parallel_roundabout_driver_imported": false,
+    "command_mux_fail_closed": true,
+    "udp_ports": {
+      "competition_source": 9088,
+      "competition_destination": 9099,
+      "collision_source": 9091,
+      "collision_destination": 9092,
+      "control_source": 9094,
+      "control_destination": 9093
+    },
+    "guide": "morai_ws/docs/MERGED_AVOIDANCE_HIGHWAY_KO.md",
     "ros_build_verified": false,
     "morai_driving_verified": false
   }

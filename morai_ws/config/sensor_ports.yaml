@@ -51,10 +51,12 @@ udp_fallback:
     ubuntu_source_port: 9094
     morai_destination_port: 9093
   competition_status:
-    morai_host_port: 9080
-    ubuntu_destination_port: 9081
+    morai_host_port: 9088
+    ubuntu_destination_port: 9099
     supported_packet_sizes: [181, 229]
-    note: 개인 테스트 Competition 상태 입력. 본선 전달 포트는 별도 확인.
+  collision_data:
+    morai_host_port: 9091
+    ubuntu_destination_port: 9092
 
 internal_output_topics:
   camera_front: /camera/front/image/compressed

@@ -5,7 +5,8 @@
   <arg name="bind_ip" default="0.0.0.0" />
   <arg name="gps_port" default="3001" />
   <arg name="imu_port" default="4001" />
-  <arg name="ego_status_port" default="9081" />
+  <arg name="ego_status_port" default="9099" />
+  <arg name="ego_status_source_port" default="9088" />
   <arg name="morai_host_ip" default="192.168.0.147" />
   <arg name="control_remote_port" default="9093" />
   <arg name="control_source_port" default="9094" />
@@ -71,6 +72,7 @@
     <arg name="control_output_enabled" value="$(arg enable_control)" />
     <arg name="status_bind_ip" value="$(arg bind_ip)" />
     <arg name="status_port" value="$(arg ego_status_port)" />
+    <arg name="status_source_port" value="$(arg ego_status_source_port)" />
     <arg name="status_topic" value="/Ego_topic" />
     <arg name="status_frame_id" value="map" />
     <arg name="control_remote_ip" value="$(arg morai_host_ip)" />

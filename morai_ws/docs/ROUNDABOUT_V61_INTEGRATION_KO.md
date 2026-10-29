@@ -22,7 +22,7 @@ A2256W000133` 링크로 만들었고, 메인 전역 경로의 기존 V6.1 인덱
 ## 실행 방법
 
 기존 `new_final_ws`와 명령이 같다. MORAI LiDAR 목적지는 Ubuntu의 UDP 2001로
-설정하고, GPS 3001, IMU 4001, Competition Status 9081, CAM1 1101, CAM4 1131은
+설정하고, GPS 3001, IMU 4001, Competition Status 9099, CAM1 1101, CAM4 1131은
 기존 설정을 유지한다.
 
 Docker 갱신:

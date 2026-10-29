@@ -32,7 +32,9 @@ class CurvatureLaunchValidationTest(unittest.TestCase):
             check.validate_curvature_names(names, '\n'.join(names), roundabout_enabled=False)
 
     def test_highway_nodes_are_required_when_enabled(self):
-        names = self.base_names() + sorted(check.ROUNDABOUT_REQUIRED) + sorted(check.HIGHWAY_NODES)
+        names = (self.base_names() + sorted(check.ROUNDABOUT_REQUIRED) +
+                 sorted(check.HIGHWAY_NODES | check.HIGHWAY_BASE_NODES |
+                        check.SECONDARY_CONTROL_NODES))
         check.validate_curvature_names(names, '\n'.join(names), roundabout_enabled=True,
                                        highway_enabled=True)
         partial = [n for n in names if n != '/highway_command_mux']
@@ -41,7 +43,9 @@ class CurvatureLaunchValidationTest(unittest.TestCase):
                                            highway_enabled=True)
 
     def test_highway_keeps_the_lidar_without_the_roundabout(self):
-        names = self.base_names() + sorted(check.ROUNDABOUT_LIDAR_NODES) + sorted(check.HIGHWAY_NODES)
+        names = (self.base_names() + sorted(check.ROUNDABOUT_LIDAR_NODES) +
+                 sorted(check.HIGHWAY_NODES | check.HIGHWAY_BASE_NODES |
+                        check.SECONDARY_CONTROL_NODES))
         check.validate_curvature_names(names, '\n'.join(names), roundabout_enabled=False,
                                        highway_enabled=True)
 
@@ -49,6 +53,23 @@ class CurvatureLaunchValidationTest(unittest.TestCase):
         names = self.base_names() + ['/highway_lane_strategy']
         with self.assertRaises(AssertionError):
             check.validate_curvature_names(names, '\n'.join(names), roundabout_enabled=False)
+
+    def test_avoidance_reuses_secondary_controller_and_lidar(self):
+        names = (self.base_names() + sorted(check.ROUNDABOUT_LIDAR_NODES) +
+                 sorted(check.AVOIDANCE_NODES | check.SECONDARY_CONTROL_NODES))
+        check.validate_curvature_names(names, '\n'.join(names), roundabout_enabled=False,
+                                       avoidance_enabled=True)
+
+    def test_highway_with_avoidance_does_not_start_parallel_base_node(self):
+        names = (self.base_names() + sorted(check.ROUNDABOUT_REQUIRED) +
+                 sorted(check.AVOIDANCE_NODES | check.HIGHWAY_NODES |
+                        check.SECONDARY_CONTROL_NODES))
+        check.validate_curvature_names(names, '\n'.join(names), roundabout_enabled=True,
+                                       highway_enabled=True, avoidance_enabled=True)
+        with self.assertRaises(AssertionError):
+            check.validate_curvature_names(names + ['/highway_base_path'], '\n'.join(names),
+                                           roundabout_enabled=True, highway_enabled=True,
+                                           avoidance_enabled=True)
 
 
 if __name__ == '__main__':

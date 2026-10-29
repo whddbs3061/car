@@ -37,6 +37,48 @@ def mux_choice(state: Optional[Dict], state_age_s: float, highway_cmd_age_s: flo
     return True, str(phase)
 
 
+def merged_mux_choice(highway_state: Optional[Dict], highway_state_age_s: float,
+                      avoidance_state: Optional[Dict], avoidance_state_age_s: float,
+                      main_cmd_age_s: float, secondary_cmd_age_s: float,
+                      highway_end_s: float, timeout_s: float,
+                      highway_enabled: bool = True,
+                      avoidance_enabled: bool = False) -> Tuple[str, str]:
+    """Choose ``main``, ``secondary`` or fail-safe ``stop``.
+
+    The secondary controller follows the avoidance manager outside the highway
+    and the escape4 strategy inside it.  Required state/command streams are
+    fail-closed: losing one never silently gives obstacle or highway authority
+    back to the nominal controller.
+    """
+    if highway_enabled:
+        if highway_state is None or not 0.0 <= highway_state_age_s <= timeout_s:
+            return "stop", "highway_state_stale"
+        phase = highway_state.get("phase")
+        route_s = highway_state.get("route_s")
+        highway_active = phase not in (None, "OFF")
+        if phase == "DONE" and (route_s is None or float(route_s) >= highway_end_s):
+            highway_active = False
+        if highway_active:
+            if not 0.0 <= secondary_cmd_age_s <= timeout_s:
+                return "stop", "secondary_command_stale_highway"
+            return "secondary", "highway_%s" % phase
+
+    if avoidance_enabled:
+        if avoidance_state is None or not 0.0 <= avoidance_state_age_s <= timeout_s:
+            return "stop", "avoidance_state_stale"
+        state = avoidance_state.get("state")
+        if not state:
+            return "stop", "avoidance_state_invalid"
+        if state != "NORMAL":
+            if not 0.0 <= secondary_cmd_age_s <= timeout_s:
+                return "stop", "secondary_command_stale_avoidance"
+            return "secondary", "avoidance_%s" % state
+
+    if not 0.0 <= main_cmd_age_s <= timeout_s:
+        return "stop", "main_command_stale"
+    return "main", "nominal"
+
+
 def route_window(points: Sequence[Point], s_values: Sequence[float], s: float,
                  back_m: float, ahead_m: float) -> List[Point]:
     """Route points from back_m behind to ahead_m ahead of arc length s,

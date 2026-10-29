@@ -136,7 +136,7 @@ class NoTurnSignalsLaunchTest(unittest.TestCase):
         native = ET.parse(directory / "final_ws_native_no_lamps.launch").getroot()
         final = ET.parse(directory / "final_ws_bringup.launch").getroot()
         perception = ET.parse(directory / "perception_control_bringup.launch").getroot()
-        self.assertEqual(native.find("arg[@name='ego_status_port']").get("default"), "9081")
+        self.assertEqual(native.find("arg[@name='ego_status_port']").get("default"), "9099")
         self.assertEqual(native.find("arg[@name='enable_control']").get("default"), "false")
         self.assertEqual(native.find("include/arg[@name='test_without_turn_signals']").get("value"), "true")
         self.assertEqual(native.find("include/arg[@name='enable_turn_signal']").get("value"), "false")

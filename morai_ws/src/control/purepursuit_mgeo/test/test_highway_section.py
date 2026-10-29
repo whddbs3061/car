@@ -16,7 +16,9 @@ WS = PACKAGE.parents[2]
 sys.path.insert(0, str(PACKAGE / "src"))
 
 from purepursuit_mgeo import highway_overtake_escape4 as escape4  # noqa: E402
-from purepursuit_mgeo.highway_section import mux_choice, route_window  # noqa: E402
+from purepursuit_mgeo.highway_section import (  # noqa: E402
+    merged_mux_choice, mux_choice, route_window,
+)
 
 LAUNCH = WS / "src/bringup/morai_bringup/launch/final_ws_curvature_signal.launch"
 HIGHWAY_CONTROLLER = (WS / "src/experimental/curvature_speed_purepursuit/scripts"
@@ -44,6 +46,33 @@ class MuxChoiceTest(unittest.TestCase):
         self.assertEqual(self.choice("CHASE", state_age=0.8), (False, "highway_state_stale"))
         self.assertEqual(self.choice("CHASE", command_age=0.8), (False, "highway_command_stale"))
 
+    def merged(self, phase="OFF", avoidance="NORMAL", highway_age=0.1,
+               avoidance_age=0.1, main_age=0.1, secondary_age=0.1,
+               highway_enabled=True, avoidance_enabled=True):
+        return merged_mux_choice(
+            {"phase": phase, "route_s": 1200.0}, highway_age,
+            {"state": avoidance}, avoidance_age, main_age, secondary_age,
+            self.END, 0.5, highway_enabled, avoidance_enabled)
+
+    def test_merged_mux_keeps_nominal_authority_outside_missions(self):
+        self.assertEqual(self.merged(), ("main", "nominal"))
+
+    def test_merged_mux_uses_one_secondary_controller_for_both_features(self):
+        self.assertEqual(self.merged(phase="CHASE"),
+                         ("secondary", "highway_CHASE"))
+        self.assertEqual(self.merged(avoidance="AVOIDING_BYPASS"),
+                         ("secondary", "avoidance_AVOIDING_BYPASS"))
+
+    def test_merged_mux_fails_closed_on_required_stale_inputs(self):
+        self.assertEqual(self.merged(highway_age=0.8),
+                         ("stop", "highway_state_stale"))
+        self.assertEqual(self.merged(avoidance_age=0.8),
+                         ("stop", "avoidance_state_stale"))
+        self.assertEqual(self.merged(phase="CHASE", secondary_age=0.8),
+                         ("stop", "secondary_command_stale_highway"))
+        self.assertEqual(self.merged(main_age=0.8),
+                         ("stop", "main_command_stale"))
+
 
 class RouteWindowTest(unittest.TestCase):
     def test_window_covers_back_and_ahead(self):
@@ -64,12 +93,20 @@ class LaunchWiringTest(unittest.TestCase):
     def param(self, node, name):
         return node.find("param[@name='%s']" % name).get("value")
 
-    def test_highway_nodes_run_with_enable_highway(self):
+    def test_highway_and_avoidance_nodes_use_explicit_feature_gates(self):
         self.assertEqual(self.root.find("arg[@name='enable_highway']").get("default"), "true")
-        for name in ("highway_base_path", "highway_lane_strategy",
-                     "highway_curvature_purepursuit", "highway_command_mux"):
-            self.assertEqual(self.nodes[name].get("if"), "$(arg enable_highway)", name)
+        self.assertEqual(self.root.find("arg[@name='enable_obstacle_avoidance']").get("default"),
+                         "true")
+        self.assertEqual(self.nodes["highway_base_path"].get("if"),
+                         "$(eval arg('enable_highway') and not arg('enable_obstacle_avoidance'))")
+        self.assertEqual(self.nodes["highway_lane_strategy"].get("if"), "$(arg enable_highway)")
+        for name in ("highway_curvature_purepursuit", "highway_command_mux"):
+            self.assertEqual(self.nodes[name].get("if"),
+                             "$(eval arg('enable_highway') or arg('enable_obstacle_avoidance'))",
+                             name)
             self.assertEqual(self.nodes[name].get("pkg"), "purepursuit_mgeo", name)
+        for name in ("bypass_lane_guard", "avoidance_path_manager"):
+            self.assertEqual(self.nodes[name].get("if"), "$(arg enable_obstacle_avoidance)")
 
     def test_one_command_reaches_the_fusion(self):
         main = self.nodes["curvature_speed_purepursuit"]
@@ -77,7 +114,7 @@ class LaunchWiringTest(unittest.TestCase):
         mux = self.nodes["highway_command_mux"]
         fusion = self.nodes["curvature_signal_controller"]
         self.assertEqual(self.param(main, "command_topic"),
-                         "$(eval '/control/ctrl_cmd_main' if arg('enable_highway') else '/control/ctrl_cmd')")
+                         "$(eval '/control/ctrl_cmd_main' if (arg('enable_highway') or arg('enable_obstacle_avoidance')) else '/control/ctrl_cmd')")
         self.assertEqual(self.param(mux, "main_command_topic"), "/control/ctrl_cmd_main")
         self.assertEqual(self.param(highway, "command_topic"), "/control/ctrl_cmd_highway")
         self.assertEqual(self.param(mux, "highway_command_topic"), "/control/ctrl_cmd_highway")
@@ -88,9 +125,10 @@ class LaunchWiringTest(unittest.TestCase):
 
     def test_highway_controller_follows_highway_lane_strategy(self):
         highway = self.nodes["highway_curvature_purepursuit"]
-        self.assertEqual(self.param(highway, "active_path_topic"), "/highway_lane_strategy/active_path")
+        self.assertEqual(self.param(highway, "active_path_topic"),
+                         "$(eval '/highway_lane_strategy/active_path' if arg('enable_highway') else '/avoidance_path_manager/active_path')")
         self.assertEqual(self.param(highway, "stop_required_topic"),
-                         "/highway_lane_strategy/stop_required")
+                         "$(eval '/highway_lane_strategy/stop_required' if arg('enable_highway') else '/avoidance_path_manager/stop_required')")
         self.assertEqual(self.param(highway, "target_speed_override_topic"),
                          "/highway_lane_strategy/target_speed_mps")
         self.assertEqual(self.param(highway, "require_route_mission_ready"), "false")
@@ -105,12 +143,17 @@ class LaunchWiringTest(unittest.TestCase):
 
     def test_base_path_and_highway_end(self):
         planner = self.nodes["highway_lane_strategy"]
-        base = self.nodes["highway_base_path"]
         mux = self.nodes["highway_command_mux"]
-        for key in ("base_path_topic", "base_stop_topic"):
-            self.assertEqual(self.param(planner, key), self.param(base, key))
+        self.assertIn("/avoidance_path_manager/active_path",
+                      self.param(planner, "base_path_topic"))
+        self.assertIn("/avoidance_path_manager/stop_required",
+                      self.param(planner, "base_stop_topic"))
+        self.assertEqual(self.param(planner, "base_trajectory_topic"),
+                         "$(eval '/avoidance_path_manager/trajectory' if arg('enable_obstacle_avoidance') else '')")
         self.assertEqual(self.param(planner, "highway_end_s"), "$(arg highway_end_s)")
         self.assertEqual(self.param(mux, "highway_end_s"), "$(arg highway_end_s)")
+        self.assertEqual(self.param(mux, "avoidance_state_topic"),
+                         "/avoidance_path_manager/state")
         self.assertEqual(self.root.find("arg[@name='highway_end_s']").get("default"),
                          str(escape4.OvertakeConfig().highway_end_s))
 
@@ -118,7 +161,7 @@ class LaunchWiringTest(unittest.TestCase):
         lidar = next(i for i in self.root.findall("include")
                      if "lidar_algorithm_pipeline.launch" in i.get("file", ""))
         self.assertEqual(lidar.get("if"),
-                         "$(eval arg('enable_roundabout_mission') or arg('enable_highway'))")
+                         "$(eval arg('enable_roundabout_mission') or arg('enable_highway') or arg('enable_obstacle_avoidance'))")
         self.assertEqual(self.param(self.nodes["highway_lane_strategy"], "obstacle_topic"),
                          lidar.find("arg[@name='map_obstacle_topic']").get("value"))
 

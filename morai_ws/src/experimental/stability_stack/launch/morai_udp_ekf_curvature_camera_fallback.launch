@@ -20,7 +20,7 @@
   <arg name="bind_ip" default="0.0.0.0" />
   <arg name="gps_port" default="3001" />
   <arg name="imu_port" default="4001" />
-  <arg name="ego_status_port" default="9081" />
+  <arg name="ego_status_port" default="9099" />
 
   <!-- 먼저 false로 토픽과 검출 결과를 확인한다. -->
   <arg name="enable_control" default="false" />

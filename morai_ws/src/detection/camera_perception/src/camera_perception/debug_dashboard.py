@@ -17,7 +17,7 @@ EXPLANATIONS = {
     'reference_path_not_received': '곡률 제어 노드가 발행하는 기준 경로를 받지 못했습니다.',
     'signal_localization_unreliable': '차량 위치를 기준 경로에 유효하게 연결하지 못했습니다.',
     'odometry_or_route_unavailable': '유효한 위치·속도 또는 기준 경로가 없습니다.',
-    'vehicle_speed_stale_or_unavailable': 'Competition 차량 속도가 없거나 0.5초 이상 지연되어 정지합니다. Competition 상태 UDP 9081 송신과 수신 설정을 확인하세요.',
+    'vehicle_speed_stale_or_unavailable': 'Competition 차량 속도가 없거나 0.5초 이상 지연되어 정지합니다. Competition 상태 UDP 9099 송신과 수신 설정을 확인하세요.',
     'signal_pose_pair_pending': 'CAM4 영상 시각에 맞는 차량 위치를 기다리는 중입니다.',
     'no_projected_targets': '현재 CAM4 화면에 투영되는 경로 신호등이 없습니다. 카메라 설정·차량 위치·정차 여유를 확인하세요.',
     'no_match': 'MGeo 신호등 투영 위치에 맞는 CAM4 검출이 없습니다.',

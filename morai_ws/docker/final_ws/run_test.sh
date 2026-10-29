@@ -19,12 +19,17 @@ source "$SCRIPT_DIR/highway.env"
 source "$SCRIPT_DIR/highway-test.env.example"
 source "$SCRIPT_DIR/highway-test.env"
 # new_final_ws: saved legacy EGO_STATUS_PORT must not select the old input.
-COMPETITION_STATUS_PORT="${COMPETITION_STATUS_PORT:-9081}"
+COMPETITION_STATUS_PORT="${COMPETITION_STATUS_PORT:-9099}"
+COMPETITION_STATUS_SOURCE_PORT="${COMPETITION_STATUS_SOURCE_PORT:-9088}"
 [[ "$COMPETITION_STATUS_PORT" =~ ^[0-9]{4,5}$ ]] &&
   (( 10#$COMPETITION_STATUS_PORT >= 1000 && 10#$COMPETITION_STATUS_PORT <= 65535 )) || {
   echo 'COMPETITION_STATUS_PORT must be 1000..65535' >&2; exit 2;
 }
 EGO_STATUS_PORT="$COMPETITION_STATUS_PORT"
+[[ "$COMPETITION_STATUS_SOURCE_PORT" =~ ^[0-9]{1,5}$ ]] &&
+  (( 10#$COMPETITION_STATUS_SOURCE_PORT <= 65535 )) || {
+  echo 'COMPETITION_STATUS_SOURCE_PORT must be 0..65535' >&2; exit 2;
+}
 
 source "$SCRIPT_DIR/curvature_runtime_files.sh"
 if [[ "$ACTION" == view ]]; then
@@ -188,6 +193,7 @@ COMMON_ARGS=(
   "workspace_path:=/opt/AutoVehicle/morai_ws"
   "path_file:=/opt/AutoVehicle/morai_ws/data/routes/2026_molit_comp_global_path.txt"
   "gps_port:=$GPS_PORT" "imu_port:=$IMU_PORT" "ego_status_port:=$EGO_STATUS_PORT"
+  "ego_status_source_port:=$COMPETITION_STATUS_SOURCE_PORT"
   "morai_host_ip:=$MORAI_IP"
   "control_remote_port:=$CONTROL_REMOTE_PORT" "control_source_port:=$CONTROL_SOURCE_PORT"
   "max_speed_kph:=$MAX_SPEED_KPH" "lateral_accel_limit_mps2:=$LATERAL_ACCEL_LIMIT_MPS2"
@@ -219,6 +225,7 @@ case "$TEST_PROFILE" in
       "lane_info_port:=$LANE_INFO_PORT" "yolo_port:=$YOLO_PORT"
       "enable_roundabout_mission:=true"
       "enable_highway:=${HIGHWAY_ENABLED:-true}"
+      "enable_obstacle_avoidance:=${AVOIDANCE_ENABLED:-true}"
       "lidar_host_port:=$ROI_LIDAR_HOST_PORT" "lidar_port:=$ROI_LIDAR_PORT"
       "lidar_x_m:=$LIDAR_X_M" "lidar_y_m:=$LIDAR_Y_M"
       "lidar_yaw_deg:=$LIDAR_YAW_DEG"

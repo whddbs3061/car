@@ -67,8 +67,9 @@ class CompetitionBridgeTests(unittest.TestCase):
         self.harness.setUp()
         self.node=self.harness.bridge(False)
 
-    def test_default_listens_competition_on_9081(self):
-        self.assertEqual((self.node.status_protocol,self.node.status_port),('competition',9081))
+    def test_default_uses_competition_9088_to_9099(self):
+        self.assertEqual((self.node.status_protocol,self.node.status_source_port,
+                          self.node.status_port),('competition',9088,9099))
 
     def test_ros_projection_marks_unavailable_fields_and_converts_once(self):
         for size in (181,229):
@@ -83,6 +84,7 @@ class CompetitionBridgeTests(unittest.TestCase):
             metadata=json.loads(self.node.metadata_pub.publish.call_args.args[0].data)
             self.assertEqual(metadata['packet_length'],size)
             self.assertEqual(metadata['velocity_x_mps'],10.)
+            self.assertEqual(metadata['expected_source_port'],9088)
             self.assertFalse(metadata['position_available'])
             self.assertFalse(metadata['velocity_yz_available'])
             self.assertEqual((metadata['ctrl_mode'],metadata['gear']),(2,4))
@@ -93,9 +95,10 @@ class CompetitionBridgeTests(unittest.TestCase):
         self.harness.socket_factory.return_value=receive
         second=bytearray(packet(229));struct.pack_into("<I",second,31,250_000_001)
         receive.recvfrom.side_effect=[
-            (packet()+b'garbage',('192.0.2.1',9080)),
-            (packet(181),('192.0.2.1',9080)),(packet(181),('192.0.2.1',9080)),
-            (bytes(second),('192.0.2.1',9080))]
+            (packet(181),('192.0.2.1',9087)),
+            (packet()+b'garbage',('192.0.2.1',9088)),
+            (packet(181),('192.0.2.1',9088)),(packet(181),('192.0.2.1',9088)),
+            (bytes(second),('192.0.2.1',9088))]
         values=[]
         def published(msg):
             values.append(msg)
@@ -103,7 +106,7 @@ class CompetitionBridgeTests(unittest.TestCase):
         self.node.status_pub.publish.side_effect=published
         self.node.status_receive_loop()
         self.assertEqual(len(values),2)
-        self.assertEqual(receive.recvfrom.call_count,4)
+        self.assertEqual(receive.recvfrom.call_count,5)
         for call in receive.recvfrom.call_args_list:self.assertEqual(call.args,(65535,))
-        receive.bind.assert_called_once_with(('0.0.0.0',9081))
+        receive.bind.assert_called_once_with(('0.0.0.0',9099))
         self.harness.assert_no_sends()

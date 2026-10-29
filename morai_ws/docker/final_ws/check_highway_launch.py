@@ -35,27 +35,42 @@ ROUNDABOUT_LIDAR_NODES = {
     '/morai_lidar_udp_source',
     '/roundabout_lidar_tracking',
 }
-# enable_highway: the escape4 highway section (its LiDAR is the roundabout's).
-HIGHWAY_NODES = {
-    '/highway_base_path',
-    '/highway_lane_strategy',
+# enable_highway: escape4 owns the managed path inside its route section.
+HIGHWAY_NODES = {'/highway_lane_strategy'}
+SECONDARY_CONTROL_NODES = {
     '/highway_curvature_purepursuit',
     '/highway_command_mux',
 }
+HIGHWAY_BASE_NODES = {'/highway_base_path'}
+AVOIDANCE_NODES = {
+    '/avoidance_frenet_debug',
+    '/bypass_lane_guard',
+    '/avoidance_path_manager',
+}
 
 
-def validate_curvature_names(names, output, roundabout_enabled, highway_enabled=False):
+def validate_curvature_names(names, output, roundabout_enabled, highway_enabled=False,
+                             avoidance_enabled=False):
     assert len(names) == len(set(names)), output
     for required in CURVATURE_REQUIRED:
         assert required in names, (required, output)
-    for excluded in CURVATURE_EXCLUDED - (HIGHWAY_NODES if highway_enabled else set()):
-        assert excluded not in names, (excluded, output)
-    present_highway = HIGHWAY_NODES.intersection(names)
+    optional = set()
     if highway_enabled:
-        assert present_highway == HIGHWAY_NODES, (
-            'highway nodes missing', HIGHWAY_NODES - present_highway, output)
-    else:
-        assert not present_highway, ('highway nodes remained disabled', present_highway, output)
+        optional |= HIGHWAY_NODES
+    if highway_enabled or avoidance_enabled:
+        optional |= SECONDARY_CONTROL_NODES
+    if highway_enabled and not avoidance_enabled:
+        optional |= HIGHWAY_BASE_NODES
+    if avoidance_enabled:
+        optional |= AVOIDANCE_NODES
+    for excluded in CURVATURE_EXCLUDED - optional:
+        assert excluded not in names, (excluded, output)
+    expected_optional = optional
+    known_optional = HIGHWAY_NODES | SECONDARY_CONTROL_NODES | HIGHWAY_BASE_NODES | AVOIDANCE_NODES
+    present_optional = known_optional.intersection(names)
+    assert present_optional == expected_optional, (
+        'optional nodes mismatch', 'missing', expected_optional - present_optional,
+        'unexpected', present_optional - expected_optional, output)
 
     present_roundabout = ROUNDABOUT_REQUIRED.intersection(names)
     if roundabout_enabled:
@@ -64,7 +79,8 @@ def validate_curvature_names(names, output, roundabout_enabled, highway_enabled=
         expected_lidar = ROUNDABOUT_LIDAR_NODES
     else:
         # The highway keeps the roundabout's LiDAR nodes, never its gate.
-        expected_lidar = ROUNDABOUT_LIDAR_NODES if highway_enabled else set()
+        expected_lidar = (ROUNDABOUT_LIDAR_NODES
+                          if highway_enabled or avoidance_enabled else set())
         left = present_roundabout - expected_lidar
         assert not left, ('roundabout nodes remained disabled', left, output)
 
@@ -99,15 +115,20 @@ def main():
             'final_ws_curvature_signal.launch','workspace_path:='+str(ws),
             'enable_control:='+control],env=env,text=True)
         names=output.splitlines()
-        validate_curvature_names(names, output, roundabout_enabled=True, highway_enabled=True)
+        validate_curvature_names(names, output, roundabout_enabled=True, highway_enabled=True,
+                                 avoidance_enabled=True)
 
-    for roundabout, highway in (('false', 'true'), ('true', 'false'), ('false', 'false')):
+    for roundabout, highway, avoidance in (
+            ('false', 'true', 'true'), ('true', 'false', 'true'),
+            ('true', 'true', 'false'), ('false', 'false', 'false')):
         output=subprocess.check_output(['roslaunch','--nodes','morai_bringup',
             'final_ws_curvature_signal.launch','workspace_path:='+str(ws),
             'enable_control:=false','enable_roundabout_mission:='+roundabout,
-            'enable_highway:='+highway],env=env,text=True)
+            'enable_highway:='+highway,
+            'enable_obstacle_avoidance:='+avoidance],env=env,text=True)
         validate_curvature_names(output.splitlines(), output, roundabout_enabled=roundabout == 'true',
-                                 highway_enabled=highway == 'true')
+                                 highway_enabled=highway == 'true',
+                                 avoidance_enabled=avoidance == 'true')
     print('CURVATURE_SIGNAL_LAUNCH_OK: ROS resolved monitor/drive with and without the highway; '
           'control was not started')
 

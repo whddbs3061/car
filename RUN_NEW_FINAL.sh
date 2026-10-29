@@ -25,4 +25,4 @@ if [[ "$ACTUAL" != "$WS/src/bringup/morai_bringup" ]]; then
 fi
 exec roslaunch morai_bringup final_ws_curvature_signal.launch \
   workspace_path:="$WS" enable_control:="$CONTROL" \
-  morai_host_ip:=192.168.10.14 ego_status_port:=9081 "$@"
+  morai_host_ip:=192.168.10.14 ego_status_port:=9099 "$@"

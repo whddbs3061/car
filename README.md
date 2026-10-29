@@ -2,7 +2,7 @@
 
 **`new_final_ws` 브랜치 실행 기준:** [Competition 전용 상태 수신과 실행 안내](morai_ws/docs/NEW_FINAL_COMPETITION_KO.md).
 기존 `final_ws`의 GPS·IMU 위치 추정과 곡률·신호등 주행을 유지하고,
-차량 상태 입력을 Competition Vehicle Status / Ubuntu UDP **9081**로 교체했습니다.
+차량 상태 입력을 Competition Vehicle Status / Ubuntu UDP **9099**로 교체했습니다.
 현재 개인 테스트 IP는 Ubuntu `192.168.10.21`, Windows MORAI `192.168.10.14`입니다.
 catkin 작업 공간은 저장소 루트가 아닌 **`morai_ws/`**입니다.
 `morai_ws_full` 브랜치의 통합 런치를 이 브랜치에서 실행하지 않습니다.
@@ -26,6 +26,8 @@ IP는 Ubuntu `192.168.0.185`, MORAI `192.168.0.147` 기준입니다.
 [통합 기능 안내](morai_ws/docs/HIGHWAY_LANE_CHANGE_INTEGRATION_20261005_KO.md)를 참고하세요.
 `final_ws_curvature_signal.launch`에 병합한 고속도로 escape4(`enable_highway`)는
 [escape4 병합 안내](morai_ws/docs/HIGHWAY_ESCAPE4_KO.md)를 참고하세요.
+`merged` 브랜치의 메인 주행·회전교차로·Escape4·장애물 회피 결합과 UDP 포트는
+[merged 통합 안내](morai_ws/docs/MERGED_AVOIDANCE_HIGHWAY_KO.md)를 참고하세요.
 
 카메라 포트는 다음으로 통일합니다.
 

@@ -165,7 +165,8 @@ class TransportSafetyTest(unittest.TestCase):
         second_packet=bytearray(packet)
         struct.pack_into("<I",second_packet,31,21)
         receive_socket.recvfrom.side_effect = [
-            socket.timeout(), (packet, ("192.0.2.1", 909)), (bytes(second_packet), ("192.0.2.1", 909))
+            socket.timeout(), (packet, ("192.0.2.1", 9088)),
+            (bytes(second_packet), ("192.0.2.1", 9088))
         ]
         published = []
 
@@ -177,7 +178,7 @@ class TransportSafetyTest(unittest.TestCase):
         node.status_pub.publish.side_effect = publish
         self.thread_factory.call_args.kwargs["target"]()
         self.socket_factory.assert_called_once_with(socket.AF_INET, socket.SOCK_DGRAM)
-        receive_socket.bind.assert_called_once_with(("0.0.0.0", 9081))
+        receive_socket.bind.assert_called_once_with(("0.0.0.0", 9099))
         receive_socket.settimeout.assert_called_once_with(0.5)
         self.assertEqual(receive_socket.recvfrom.call_count, 3)
         self.assertEqual(len(published), 2)

@@ -26,7 +26,7 @@ catkin 작업 공간은 저장소 루트가 아닌 **`morai_ws/`**다.
 |---|---|
 | map 위치 x/y/z | GPS UDP 3001 → GPS-MGeo 변환 → GPS/IMU EKF |
 | 자세·각속도·관성 가속도 | IMU UDP 4001 → 기존 EKF |
-| 실제 전진 속도 | Competition UDP 9081의 velocity.x, km/h → m/s 1회 변환 |
+| 실제 전진 속도 | Competition UDP 9099의 velocity.x, km/h → m/s 1회 변환 |
 | 경로·신호등 투영용 pose | EKF `/localization/odometry` |
 | 일반 Ego Vehicle Status | 수신 parser와 모드 전환 기능 제거 |
 
@@ -64,19 +64,19 @@ MORAI 송신 항목을 반드시 **Competition Vehicle Status**로 선택하고 
 | 항목 | 설정 |
 |---|---|
 | Windows MORAI / Ubuntu | 192.168.10.14 / 192.168.10.21 |
-| Competition 상태 목적지 | Ubuntu 192.168.10.21 : **9081 / UDP** |
+| Competition 상태 목적지 | Ubuntu 192.168.10.21 : **9099 / UDP** |
 | GPS / IMU 목적지 | Ubuntu : 3001 / 4001 |
 | CAM1 / CAM4 목적지 | Ubuntu : 1101 / 1131 |
 | 차량 명령 | Ubuntu 송신 9094 → Windows MORAI 수신 9093 |
 
-9081은 사용자가 지정한 개인 테스트 수신 포트다. 대회 Windows loopback 전달기의
+9099은 사용자가 지정한 개인 테스트 수신 포트다. 대회 Windows loopback 전달기의
 포트와 같은 의미로 간주하지 않는다. 실제 전달기의 목적지 포트는 별도 확인한다.
 YAML은 참고 설정이며 실제값은 launch 인자와 로컬 env가 결정한다.
 
 Docker 설정은 `highway.env`의 IP·컨테이너 이름과
-`highway-test.env`의 **`COMPETITION_STATUS_PORT=9081`**이다.
+`highway-test.env`의 **`COMPETITION_STATUS_PORT=9099`**이다.
 예전 저장값 `EGO_STATUS_PORT=1911`은 무시한다.
-launch 인자 `ego_status_port`는 호환 이름이며 기본값은 9081이다.
+launch 인자 `ego_status_port`는 호환 이름이며 기본값은 9099이다.
 
 ## 기존 Ubuntu Docker 환경에서 실행
 
@@ -92,7 +92,7 @@ cp highway-test.env.example highway-test.env
 새 `highway.env`의 `IMAGE_NAME`, `TORCH_FLAVOR`는 현재 설치된 ROS 이미지와 맞춘다.
 현재 예제는 Ubuntu .21, MORAI .14, **`CONTAINER_NAME=morai-new-final-net10`**이다.
 기존 컨테이너와 다른 이름을 사용한다. 기존의 `highway-test.env`를 새 폴더로 복사해도 된다.
-그 파일에 `COMPETITION_STATUS_PORT=9081`을 지정한다.
+그 파일에 `COMPETITION_STATUS_PORT=9099`을 지정한다.
 새 예제 상한 속도는 5km/h이며, 기존 설정을 복사하면 그 값이 우선한다.
 기존처럼 35km/h 상한으로 시작하려면 `bash run_test.sh speed 35`를 실행한다.
 
@@ -109,7 +109,7 @@ bash run_test.sh show 2
 bash run_test.sh monitor 2
 ```
 
-`show 2`에서 `VehicleStatus=Competition_Vehicle_Status port=9081`, IP와 컨테이너를 확인한다.
+`show 2`에서 `VehicleStatus=Competition_Vehicle_Status port=9099`, IP와 컨테이너를 확인한다.
 `monitor 2`는 제어 UDP를 보내지 않는다. 설치 검사에서 **`RUNTIME_MATCH`**가 나와야 한다.
 소스만 pull하고 예전 컨테이너를 실행하면 새 수신부가 적용되지 않는다.
 MORAI의 Competition·GPS·IMU 송신 확인 후 monitor를 Ctrl+C로 종료하고 주행한다.
@@ -137,7 +137,7 @@ xvfb-run -a bash RUN_NEW_FINAL.sh monitor
 ```
 
 monitor 종료 후 `xvfb-run -a bash RUN_NEW_FINAL.sh drive`로 실행한다.
-이 스크립트는 새 폴더의 morai_bringup 선택을 검사하고 Windows .14와 상태 9081을 전달한다.
+이 스크립트는 새 폴더의 morai_bringup 선택을 검사하고 Windows .14와 상태 9099을 전달한다.
 직접 launch 기본값은 상한 35km/h, 앞범퍼 정지선 여유 0.5m다.
 Docker의 저장 env와는 별도이며 이번 전환에서 제어값을 자동 재튜닝하지 않았다.
 이전 통합 브랜치에서 요청한 7m 정차를 시험하려면 직접 실행에

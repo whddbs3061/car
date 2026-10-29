@@ -6,6 +6,7 @@
        file and docs/HIGHWAY_ESCAPE4_KO.md). -->
   <arg name="workspace_path" default="$(env HOME)/morai_ws" />
   <arg name="path_file" default="$(arg workspace_path)/data/routes/2026_molit_comp_global_path.txt" />
+  <arg name="link_set_file" default="$(arg workspace_path)/data/mgeo/R_KR_PR_K-city_2025/link_set.json" />
   <arg name="signal_config_file" default="$(arg workspace_path)/config/curvature_signal.yaml" />
   <arg name="roundabout_config_file" default="$(arg workspace_path)/config/roundabout_v61_main.yaml" />
   <arg name="roundabout_circulating_path_file" default="$(arg workspace_path)/data/routes/roundabout_circulating_path.txt" />
@@ -17,7 +18,8 @@
   <arg name="morai_host_ip" default="192.168.0.147" />
   <arg name="gps_port" default="3001" />
   <arg name="imu_port" default="4001" />
-  <arg name="ego_status_port" default="9081" />
+  <arg name="ego_status_port" default="9099" />
+  <arg name="ego_status_source_port" default="9088" />
   <arg name="control_remote_port" default="9093" />
   <arg name="control_source_port" default="9094" />
   <arg name="enable_roundabout_mission" default="true" />
@@ -101,6 +103,12 @@
   <arg name="highway_max_speed_kph" default="79.2" />
   <arg name="highway_lateral_accel_mps2" default="2.0" />
   <arg name="highway_end_s" default="1741.721" />
+  <!-- The ZIP's mature Frenet/guard/path-manager stack is already present in
+       this branch.  Enable it here without importing its obsolete parallel
+       roundabout driver or command selector. -->
+  <arg name="enable_obstacle_avoidance" default="true" />
+  <arg name="managed_timeout_s" default="1.0" />
+  <arg name="avoidance_evaluation_speed_mps" default="$(eval float(arg('max_speed_kph')) / 3.6)" />
 
   <!-- Start only localization and the UDP bridge from the common launch.
        The bridge always receives the FINAL /ctrl_cmd, never the nominal command. -->
@@ -114,6 +122,7 @@
     <arg name="gps_port" value="$(arg gps_port)" />
     <arg name="imu_port" value="$(arg imu_port)" />
     <arg name="ego_status_port" value="$(arg ego_status_port)" />
+    <arg name="ego_status_source_port" value="$(arg ego_status_source_port)" />
     <arg name="control_remote_port" value="$(arg control_remote_port)" />
     <arg name="control_source_port" value="$(arg control_source_port)" />
     <arg name="max_steering_rad" value="$(arg max_steering_rad)" />
@@ -122,7 +131,7 @@
   <!-- Main LiDAR transport/tracker supplies map-frame vehicles to the V6.1
        decision core and to highway_lane_strategy. It does not publish vehicle
        control commands. -->
-  <include if="$(eval arg('enable_roundabout_mission') or arg('enable_highway'))" file="$(find lidar_perception)/launch/lidar_algorithm_pipeline.launch">
+  <include if="$(eval arg('enable_roundabout_mission') or arg('enable_highway') or arg('enable_obstacle_avoidance'))" file="$(find lidar_perception)/launch/lidar_algorithm_pipeline.launch">
     <arg name="algorithm_type" value="lidar_tracking_node.py" />
     <arg name="algorithm_name" value="roundabout_lidar_tracking" />
     <arg name="result_prefix" value="roundabout_tracking" />
@@ -157,7 +166,7 @@
     <param name="loop_route" value="true" />
     <param name="pose_topic" value="/localization/odometry" />
     <!-- With the highway, highway_command_mux forwards this to /control/ctrl_cmd. -->
-    <param name="command_topic" value="$(eval '/control/ctrl_cmd_main' if arg('enable_highway') else '/control/ctrl_cmd')" />
+    <param name="command_topic" value="$(eval '/control/ctrl_cmd_main' if (arg('enable_highway') or arg('enable_obstacle_avoidance')) else '/control/ctrl_cmd')" />
     <param name="publish_command" value="true" />
     <param name="stopline_topic" value="/perception/camera/stopline" />
     <param name="stopline_speed_cap_enabled" value="false" />
@@ -293,13 +302,103 @@
     <param name="highway_max_speed_kph" value="$(arg highway_max_speed_kph)" />
   </node>
 
+  <!-- ZIP avoidance stack, adapted to the main route/controller.  It only
+       plans and publishes a managed path; it never publishes CtrlCmd. -->
+  <include if="$(arg enable_obstacle_avoidance)" file="$(find purepursuit_mgeo)/launch/frenet_avoidance_debug.launch">
+    <arg name="path_file" value="$(arg path_file)" />
+    <arg name="link_set_file" value="$(arg link_set_file)" />
+    <arg name="evaluation_speed_mps" value="$(arg avoidance_evaluation_speed_mps)" />
+    <arg name="local_length_m" value="55.0" />
+    <arg name="trigger_distance_m" value="35.0" />
+    <arg name="trigger_lateral_margin_m" value="0.05" />
+    <arg name="trigger_lateral_half_cap_m" value="1.25" />
+    <arg name="bypass_static_speed_max_mps" value="0.60" />
+    <arg name="candidate_corridor_margin_m" value="0.45" />
+    <arg name="enable_mgeo_lane_candidates" value="false" />
+    <arg name="allow_bypass_with_adjacent_lane" value="true" />
+    <arg name="publish_lidar_tf" value="false" />
+    <arg name="lidar_x_m" value="$(arg lidar_x_m)" />
+    <arg name="lidar_y_m" value="$(arg lidar_y_m)" />
+    <arg name="lidar_yaw_deg" value="$(arg lidar_yaw_deg)" />
+    <arg name="bypass_lateral_margin_m" value="0.85" />
+    <arg name="bypass_longitudinal_margin_m" value="3.0" />
+    <arg name="bypass_departure_length_m" value="14.0" />
+    <arg name="bypass_return_length_m" value="14.0" />
+    <arg name="bypass_extra_clearances_m" value="[0.0, 0.4, 0.8]" />
+    <arg name="bypass_max_abs_d_m" value="3.8" />
+    <arg name="bypass_min_transition_length_m" value="6.0" />
+    <arg name="collision_longitudinal_margin_m" value="0.40" />
+    <arg name="collision_lateral_margin_m" value="0.45" />
+    <arg name="escape_prefix_m" value="3.0" />
+  </include>
+  <node if="$(arg enable_obstacle_avoidance)" pkg="purepursuit_mgeo"
+        type="bypass_lane_guard_node.py" name="bypass_lane_guard" output="screen">
+    <param name="path_file" value="$(arg path_file)" />
+    <param name="map_frame" value="map" />
+    <param name="base_selected_path_topic" value="/avoidance_frenet_debug/selected_path" />
+    <param name="base_plan_status_topic" value="/avoidance_frenet_debug/plan_status" />
+    <param name="require_atomic_plan_path" value="true" />
+    <param name="lane_info_topic" value="/perception/camera/lane_info" />
+    <param name="odom_topic" value="/localization/odometry" />
+    <param name="obstacle_topic" value="/perception/lidar/tracked_obstacles_map" />
+    <param name="enable_obstacle_lane_change" value="false" />
+    <param name="prefer_lane_change" value="false" />
+    <param name="enforce_camera_lane_bounds_on_bypass" value="false" />
+    <param name="allow_bypass_without_lane_info" value="true" />
+    <param name="bypass_lane_boundary_margin_m" value="0.15" />
+    <param name="fallback_bypass_max_abs_d_m" value="0.25" />
+    <param name="vehicle_length_m" value="4.635" />
+    <param name="vehicle_width_m" value="1.892" />
+    <param name="vehicle_center_from_base_m" value="1.50" />
+    <param name="collision_longitudinal_margin_m" value="0.40" />
+    <param name="collision_lateral_margin_m" value="0.45" />
+    <param name="wheelbase_m" value="$(arg wheelbase_m)" />
+    <param name="max_steering_rad" value="$(arg max_steering_rad)" />
+    <param name="evaluation_speed_mps" value="$(arg avoidance_evaluation_speed_mps)" />
+    <param name="max_lateral_accel_mps2" value="$(arg highway_lateral_accel_mps2)" />
+    <param name="escape_prefix_m" value="3.0" />
+  </node>
+  <node if="$(arg enable_obstacle_avoidance)" pkg="purepursuit_mgeo"
+        type="avoidance_path_manager_node.py" name="avoidance_path_manager" output="screen">
+    <param name="path_file" value="$(arg path_file)" />
+    <param name="map_frame" value="map" />
+    <param name="odom_topic" value="/localization/odometry" />
+    <param name="obstacle_topic" value="/perception/lidar/tracked_obstacles_map" />
+    <param name="selected_path_topic" value="/bypass_lane_guard/selected_path" />
+    <param name="planner_ready_topic" value="/bypass_lane_guard/planner_ready" />
+    <param name="avoidance_required_topic" value="/bypass_lane_guard/avoidance_required" />
+    <param name="safe_path_available_topic" value="/bypass_lane_guard/safe_path_available" />
+    <param name="selected_kind_topic" value="/bypass_lane_guard/selected_kind" />
+    <param name="selected_side_topic" value="/bypass_lane_guard/selected_side" />
+    <param name="plan_status_topic" value="/bypass_lane_guard/plan_status" />
+    <param name="use_atomic_plan_status" value="true" />
+    <param name="require_atomic_plan_path" value="true" />
+    <param name="enable_obstacle_avoidance" value="true" />
+    <param name="allow_lane_change_control" value="false" />
+    <param name="rate_hz" value="10.0" />
+    <param name="normal_back_m" value="3.0" />
+    <param name="normal_forward_m" value="80.0" />
+    <param name="vehicle_length_m" value="4.635" />
+    <param name="vehicle_width_m" value="1.892" />
+    <param name="vehicle_center_from_base_m" value="1.50" />
+    <param name="collision_longitudinal_margin_m" value="0.40" />
+    <param name="collision_lateral_margin_m" value="0.45" />
+    <param name="escape_prefix_m" value="3.0" />
+    <param name="allow_same_side_guard_refresh" value="true" />
+    <param name="guard_stop_confirm_s" value="0.30" />
+    <param name="guard_refresh_min_interval_s" value="0.20" />
+    <param name="cancel_cleared_bypass_near_global" value="true" />
+    <param name="threat_clear_confirm_s" value="0.40" />
+    <param name="threat_clear_max_abs_d_m" value="0.55" />
+  </node>
+
   <!-- Highway section.  highway_lane_strategy (escape4) changes lanes in the
        camera lane frame from the zone entry to the zone end, then passes the
        global route through, slowing to 28 km/h by the highway end.  Its own
        controller follows that path and speed; highway_command_mux sends its
        command to the fusion instead of the main controller's from the zone
        entry to the highway end.  The main controller keeps running throughout. -->
-  <node if="$(arg enable_highway)" pkg="purepursuit_mgeo" type="highway_base_path_node.py"
+  <node if="$(eval arg('enable_highway') and not arg('enable_obstacle_avoidance'))" pkg="purepursuit_mgeo" type="highway_base_path_node.py"
         name="highway_base_path" output="screen">
     <param name="path_file" value="$(arg path_file)" />
     <param name="odom_topic" value="/localization/odometry" />
@@ -316,9 +415,9 @@
     <param name="obstacle_topic" value="/perception/lidar/tracked_obstacles_map" />
     <param name="lane_info_topic" value="/perception/camera/lane_info" />
     <param name="cruise_speed_mps" value="$(eval float(arg('max_speed_kph')) / 3.6)" />
-    <param name="base_path_topic" value="/highway_lane_strategy/base_path" />
-    <param name="base_stop_topic" value="/highway_lane_strategy/base_stop" />
-    <param name="base_trajectory_topic" value="" />
+    <param name="base_path_topic" value="$(eval '/avoidance_path_manager/active_path' if arg('enable_obstacle_avoidance') else '/highway_lane_strategy/base_path')" />
+    <param name="base_stop_topic" value="$(eval '/avoidance_path_manager/stop_required' if arg('enable_obstacle_avoidance') else '/highway_lane_strategy/base_stop')" />
+    <param name="base_trajectory_topic" value="$(eval '/avoidance_path_manager/trajectory' if arg('enable_obstacle_avoidance') else '')" />
     <param name="route_gate_required" value="false" />
     <param name="controller_lateral_accel_limit_mps2" value="$(arg highway_lateral_accel_mps2)" />
     <param name="controller_max_accel_mps2" value="$(arg max_accel_mps2)" />
@@ -327,7 +426,7 @@
     <param name="highway_max_speed_mps" value="$(eval float(arg('highway_max_speed_kph')) / 3.6)" />
     <param name="highway_end_s" value="$(arg highway_end_s)" />
   </node>
-  <node if="$(arg enable_highway)" pkg="purepursuit_mgeo" type="curvature_pp_overtake_node.py"
+  <node if="$(eval arg('enable_highway') or arg('enable_obstacle_avoidance'))" pkg="purepursuit_mgeo" type="curvature_pp_overtake_node.py"
         name="highway_curvature_purepursuit" output="screen">
     <param name="path_file" value="$(arg path_file)" />
     <param name="pose_topic" value="/localization/odometry" />
@@ -335,11 +434,13 @@
     <param name="publish_command" value="true" />
     <param name="use_active_path" value="true" />
     <param name="require_active_path" value="true" />
-    <param name="active_path_topic" value="/highway_lane_strategy/active_path" />
-    <param name="trajectory_topic" value="" />
-    <param name="stop_required_topic" value="/highway_lane_strategy/stop_required" />
+    <param name="active_path_topic" value="$(eval '/highway_lane_strategy/active_path' if arg('enable_highway') else '/avoidance_path_manager/active_path')" />
+    <param name="trajectory_topic" value="$(eval '/highway_lane_strategy/trajectory' if arg('enable_highway') else '/avoidance_path_manager/trajectory')" />
+    <param name="active_path_timeout_sec" value="$(arg managed_timeout_s)" />
+    <param name="stop_required_topic" value="$(eval '/highway_lane_strategy/stop_required' if arg('enable_highway') else '/avoidance_path_manager/stop_required')" />
     <param name="require_fresh_stop_status" value="true" />
-    <param name="use_target_speed_override" value="true" />
+    <param name="stop_status_timeout_sec" value="$(arg managed_timeout_s)" />
+    <param name="use_target_speed_override" value="$(arg enable_highway)" />
     <param name="target_speed_override_topic" value="/highway_lane_strategy/target_speed_mps" />
     <param name="enable_merge_gate" value="false" />
     <param name="require_route_mission_ready" value="false" />
@@ -380,12 +481,16 @@
     <remap from="/experimental/curvature_steering" to="/highway_control/curvature_steering" />
     <remap from="/experimental/curvature_value" to="/highway_control/curvature_value" />
   </node>
-  <node if="$(arg enable_highway)" pkg="purepursuit_mgeo" type="highway_command_mux_node.py"
+  <node if="$(eval arg('enable_highway') or arg('enable_obstacle_avoidance'))" pkg="purepursuit_mgeo" type="highway_command_mux_node.py"
         name="highway_command_mux" output="screen">
     <param name="main_command_topic" value="/control/ctrl_cmd_main" />
     <param name="highway_command_topic" value="/control/ctrl_cmd_highway" />
     <param name="output_topic" value="/control/ctrl_cmd" />
     <param name="state_topic" value="/highway_lane_strategy/state" />
+    <param name="avoidance_state_topic" value="/avoidance_path_manager/state" />
+    <param name="highway_enabled" value="$(arg enable_highway)" />
+    <param name="avoidance_enabled" value="$(arg enable_obstacle_avoidance)" />
+    <param name="timeout_s" value="$(arg managed_timeout_s)" />
     <param name="highway_end_s" value="$(arg highway_end_s)" />
   </node>
 </launch>

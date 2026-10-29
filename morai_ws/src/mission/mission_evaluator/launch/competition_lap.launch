@@ -19,6 +19,7 @@
   <arg name="collision_udp_enabled" default="false" />
   <arg name="collision_bind_ip" default="0.0.0.0" />
   <arg name="collision_port" default="9092" />
+  <arg name="collision_source_port" default="9091" />
   <arg name="collision_sender_ip" default="" />
   <arg name="collision_packet_header" default="#CollisionData$" />
   <arg name="collision_protocol_verified" default="false" />
@@ -42,6 +43,7 @@
   <node if="$(arg collision_udp_enabled)" pkg="mission_evaluator" type="collision_evaluation_bridge.py" name="collision_evaluation_bridge" output="screen" required="true">
     <param name="bind_ip" value="$(arg collision_bind_ip)" />
     <param name="port" value="$(arg collision_port)" />
+    <param name="allowed_sender_port" value="$(arg collision_source_port)" />
     <param name="allowed_sender_ip" value="$(arg collision_sender_ip)" />
     <param name="packet_header" value="$(arg collision_packet_header)" />
     <param name="protocol_verified" value="$(arg collision_protocol_verified)" />

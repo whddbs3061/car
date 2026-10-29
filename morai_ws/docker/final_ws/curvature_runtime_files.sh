@@ -8,6 +8,7 @@ curvature_runtime_files() (
     printf '%s\n' \
       src/bringup/morai_bringup/launch/final_ws_curvature_signal.launch \
       src/bringup/morai_bringup/launch/morai_udp_ekf_purepursuit.launch \
+      src/control/purepursuit_mgeo/launch/frenet_avoidance_debug.launch \
       src/detection/camera_perception/launch/camera_perception.launch \
       src/detection/camera_perception/models/yolov8s.pt \
       src/detection/camera_perception/models/best0917.pt \
@@ -15,6 +16,7 @@ curvature_runtime_files() (
       src/detection/camera_perception/lane/mgeo/R_KR_PR_K-city_2025/node_set.json \
       src/detection/camera_perception/lane/mgeo/R_KR_PR_K-city_2025/intersection_controller_set.json \
       src/detection/camera_perception/lane/mgeo/R_KR_PR_K-city_2025/traffic_light_set.json \
+      data/mgeo/R_KR_PR_K-city_2025/link_set.json \
       src/control/purepursuit_mgeo/src/purepursuit_mgeo/longitudinal_controller.py \
       data/routes/2026_molit_comp_global_path.txt \
       data/routes/roundabout_circulating_path.txt \

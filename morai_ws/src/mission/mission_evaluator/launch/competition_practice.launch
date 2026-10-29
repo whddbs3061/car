@@ -17,6 +17,7 @@
   <arg name="lane_mode" default="map_estimate" />
   <arg name="collision_udp_enabled" default="true" />
   <arg name="collision_port" default="9092" />
+  <arg name="collision_source_port" default="9091" />
   <arg name="collision_protocol_verified" default="false" />
   <arg name="record_bag" default="false" />
   <arg name="bag_prefix" default="$(env HOME)/competition_practice" />
@@ -43,6 +44,7 @@
     <arg name="lane_mode" value="$(arg lane_mode)" />
     <arg name="collision_udp_enabled" value="$(arg collision_udp_enabled)" />
     <arg name="collision_port" value="$(arg collision_port)" />
+    <arg name="collision_source_port" value="$(arg collision_source_port)" />
     <arg name="collision_sender_ip" value="$(arg morai_host_ip)" />
     <arg name="collision_protocol_verified" value="$(arg collision_protocol_verified)" />
   </include>

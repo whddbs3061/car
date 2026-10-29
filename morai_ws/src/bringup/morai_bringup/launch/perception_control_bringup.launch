@@ -4,7 +4,7 @@
   <arg name="workspace_path" default="$(env HOME)/morai_ws" />
   <arg name="path_file" default="$(arg workspace_path)/data/routes/2026_molit_comp_global_path.txt" />
   <arg name="morai_host_ip" default="192.168.0.147" />
-  <arg name="ego_status_port" default="9081" />
+  <arg name="ego_status_port" default="9099" />
   <arg name="control_remote_port" default="9093" />
   <arg name="control_source_port" default="9094" />
   <arg name="enable_control" default="false" />

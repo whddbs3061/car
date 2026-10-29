@@ -63,7 +63,7 @@ class CompetitionInputTests(unittest.TestCase):
             root=ET.parse(path).getroot()
             for arg in root.findall('arg'):
                 if arg.get('name') in ('ego_status_port','status_port') and arg.get('default'):
-                    self.assertEqual(arg.get('default'),'9081',str(path))
+                    self.assertEqual(arg.get('default'),'9099',str(path))
                     found+=1
         self.assertGreaterEqual(found,10)
 
@@ -146,16 +146,16 @@ class SavedSettingsTests(unittest.TestCase):
             source=WS/'docker/final_ws'
             for name in ('run_test.sh','highway-test.env.example','curvature_runtime_files.sh'):
                 shutil.copyfile(source/name,scripts/name)
-            (scripts/'highway.env').write_text('UBUNTU_IP=192.168.10.21\nMORAI_IP=192.168.10.14\nCONTAINER_NAME=test_only\n',encoding='utf8',newline='\n')
+            (scripts/'highway.env').write_text('UBUNTU_IP=192.168.10.21\nMORAI_IP=192.168.10.14\nCONTAINER_NAME=test_only\n',encoding='utf8')
             saved=scripts/'highway-test.env'
-            saved.write_text('EGO_STATUS_PORT=1911\n',encoding='utf8',newline='\n')
+            saved.write_text('EGO_STATUS_PORT=1911\n',encoding='utf8')
             command=[executable,str(scripts/'run_test.sh'),'show','2']
             result=subprocess.run(command,cwd=root,capture_output=True)
             output=(result.stdout+result.stderr).decode('utf8',errors='replace')
             self.assertEqual(result.returncode,0,output)
-            self.assertIn('ego_status_port:=9081',output)
+            self.assertIn('ego_status_port:=9099',output)
             self.assertNotIn('ego_status_port:=1911',output)
-            saved.write_text('EGO_STATUS_PORT=1911\nCOMPETITION_STATUS_PORT=9082\n',encoding='utf8',newline='\n')
+            saved.write_text('EGO_STATUS_PORT=1911\nCOMPETITION_STATUS_PORT=9082\n',encoding='utf8')
             result=subprocess.run(command,cwd=root,capture_output=True)
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertIn(b'ego_status_port:=9082',result.stdout)

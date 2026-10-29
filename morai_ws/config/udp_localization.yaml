@@ -31,11 +31,11 @@ imu:
   normalize_orientation: true
 
 competition_status:
-  host_port: 9080
-  destination_port: 9081
+  host_port: 9088
+  destination_port: 9099
   supported_packet_sizes: [181, 229]
   protocol: MORAI_COMPETITION_VEHICLE_STATUS
-  # 개인 테스트의 수신 포트. 대회 전달기 포트는 별도 확인한다.
+  # MORAI Host 9088 -> Ubuntu Destination 9099.
   # UDP velocity.x는 km/h, ROS 내부 velocity.x는 m/s이다.
   # position/acceleration xyz와 velocity yz는 제공되지 않으며 사용하지 않는다.
   use_for_ekf: false

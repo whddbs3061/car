@@ -27,9 +27,12 @@ class MoraiUdpDriveBridge:
         rospy.init_node("morai_udp_drive_bridge", anonymous=False)
 
         self.status_bind_ip = rospy.get_param("~status_bind_ip", "0.0.0.0")
-        self.status_port = int(rospy.get_param("~status_port", 9081))
+        self.status_port = int(rospy.get_param("~status_port", 9099))
+        self.status_source_port = int(rospy.get_param("~status_source_port", 9088))
         if not 1000 <= self.status_port <= 65535:
             raise ValueError("Competition status must use a four-or-more-digit UDP port (1000..65535)")
+        if not 0 <= self.status_source_port <= 65535:
+            raise ValueError("Competition status source port must be 0..65535")
         self.status_protocol = str(rospy.get_param("~status_protocol", "competition"))
         if self.status_protocol != "competition":
             raise ValueError("new_final_ws accepts Competition Vehicle Status only")
@@ -122,6 +125,14 @@ class MoraiUdpDriveBridge:
                         rospy.logerr_throttle(5.0, "Vehicle status UDP 수신 오류: %s", exc)
                     break
 
+                if self.status_source_port and sender[1] != self.status_source_port:
+                    rospy.logwarn_throttle(
+                        5.0,
+                        "Vehicle status source port mismatch sender=%s:%d expected=%d",
+                        sender[0], sender[1], self.status_source_port,
+                    )
+                    continue
+
                 try:
                     measurement = parse_competition_vehicle_status(packet)
                 except (ProtocolError, ValueError) as exc:
@@ -175,6 +186,7 @@ class MoraiUdpDriveBridge:
             'timestamp': received.to_sec(), 'packet_sec': measurement.sec,
             'packet_nsec': measurement.nsec, 'packet_length': measurement.packet_length,
             'source': self.status_protocol, 'listen_port': self.status_port,
+            'expected_source_port': self.status_source_port,
             'velocity_unit': 'm/s', 'velocity_x_mps': message.velocity.x,
             'signed_velocity_mps': measurement.signed_velocity_kmh/3.6,
             'heading_deg': measurement.heading_deg, 'wheel_angle_deg': measurement.steer_deg,

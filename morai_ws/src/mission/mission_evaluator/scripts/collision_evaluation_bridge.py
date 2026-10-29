@@ -18,6 +18,9 @@ class CollisionBridge:
             raise ValueError("Collision header must contain exactly 15 bytes")
         self.verified = bool(rospy.get_param("~protocol_verified",False))
         self.remote = rospy.get_param("~allowed_sender_ip","")
+        self.source_port = int(rospy.get_param("~allowed_sender_port",9091))
+        if not 0 <= self.source_port <= 65535:
+            raise ValueError("CollisionData source port must be 0..65535")
         self.socket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
         # Intentionally no SO_REUSEADDR: never steal/share another receiver's port.
         self.socket.bind((rospy.get_param("~bind_ip","0.0.0.0"),int(rospy.get_param("~port",9092))))
@@ -39,6 +42,10 @@ class CollisionBridge:
             except OSError:
                 break
             if self.remote and sender[0] != self.remote:
+                continue
+            if self.source_port and sender[1] != self.source_port:
+                rospy.logwarn_throttle(2,"CollisionData source port mismatch: %d != %d",
+                                       sender[1],self.source_port)
                 continue
             try:
                 data = parse_collision_packet(packet,self.header)

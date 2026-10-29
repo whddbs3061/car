@@ -7,7 +7,7 @@
 |---|---|---|
 | 위경도·고도·GPS 속도 | GPS UDP 3001 → `/gps` → `/localization/gps` | MGeo 좌표 변환, EKF 초기 위치와 GPS 보정 |
 | 자세·각속도·가속도 | IMU UDP 4001 → `/Imu` | EKF 예측 |
-| 실제 전진 속도 | Competition 상태 UDP 9081 → `/Ego_topic.velocity.x` | 속도 제어, 신호 제어의 속도 판단, 평가 |
+| 실제 전진 속도 | Competition 상태 UDP 9099 → `/Ego_topic.velocity.x` | 속도 제어, 신호 제어의 속도 판단, 평가 |
 | 차량 map pose | `/localization/odometry` | 경로 추종, 정지선·신호등 투영 |
 
 일반 Ego Vehicle Status 수신 경로는 제거했다. `/Ego_topic`과

@@ -314,6 +314,11 @@ class LaunchTests(unittest.TestCase):
         wrapper = ET.parse(PACKAGE/"launch"/"competition_practice.launch").getroot()
         self.assertEqual(wrapper.find("arg[@name='enable_control']").get("default"),"false")
         self.assertEqual(observer.find("arg[@name='collision_udp_enabled']").get("default"),"false")
+        self.assertEqual(observer.find("arg[@name='collision_source_port']").get("default"),"9091")
+        self.assertEqual(observer.find("arg[@name='collision_port']").get("default"),"9092")
+        bridge = observer.find("node[@name='collision_evaluation_bridge']")
+        self.assertEqual(bridge.find("param[@name='allowed_sender_port']").get("value"),
+                         "$(arg collision_source_port)")
         self.assertFalse(any("ctrl_cmd" in ET.tostring(n,encoding="unicode") for n in observer.iter("node")))
 
     def test_production_launch_not_changed_to_include_scoring(self):
