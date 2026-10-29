@@ -66,3 +66,19 @@ bash run_overtake_v61.sh highway 54 79.2     # 고속도로 순항 / 추월 상�
 - 상속 노드는 구간 신호가 신선하고 참일 때만 값을 바꾸고, 끝나면 원래 값으로 되돌림
 
 MORAI 실주행 검증은 아직 하지 않았습니다.
+
+## 6. 대회 네트워크 포트 (2026-10-30)
+
+새 launch(`integrated_obstacle_v61_overtake.launch`)는 차량 상태를 **Competition Vehicle Status**로 받습니다.
+
+| 통신 | 포트 |
+|---|---|
+| Competition Vehicle Status (Sim → User) | 시뮬레이터 9088 → 우리 **9099** (`ego_status_port` 기본값) |
+| Ego Ctrl Cmd (User → Sim) | 우리 9094 → 시뮬레이터 9093 (그대로) |
+| Collision Data (Sim → User) | 9091 → 9092 (그대로) |
+| GPS·IMU·카메라·LiDAR | 팀원 launch 그대로 |
+
+- **Ego Vehicle Status(1911)는 쓰지 않습니다(실격 사유).** 새 launch에는 1911이 없습니다.
+- **기존 브리지로 읽습니다.** Competition Vehicle Status 패킷(`#MoraiInfo$`, 181바이트 또는 229바이트)은 앞 181바이트 배열이 기존 `morai_udp_drive_bridge` 파서와 같습니다(`car/src/path_planning/morai_udp_competition_status.py`로 확인). 그래서 브리지 코드는 그대로 두고 받는 포트만 바꿨습니다.
+- **MORAI 설정:** Competition Vehicle Status 전송을 켜고 목적지 포트를 9099로 맞춥니다. Ego Vehicle Status 전송은 끕니다.
+- **팀원 launch는 아직 1911:** `team-drive`로 띄우는 팀원 원본 `integrated_obstacle_v61.launch`는 여전히 1911입니다.

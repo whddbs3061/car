@@ -66,12 +66,24 @@ class GeneratedV61LaunchTest(unittest.TestCase):
             return [e for e in root.iter() if not (
                 e.tag == "arg" and e.get("name") in NEW_ARGS)]
         others_a = [canonical(n) for n in self.source if not (
-            n.tag == "node" and n.get("name") in WRAPPED)]
+            n.tag == "node" and n.get("name") in WRAPPED or n.get("name") == "ego_status_port")]
         others_b = [canonical(n) for n in self.output if not (
             (n.tag == "node" and n.get("name") in WRAPPED)
-            or (n.tag == "arg" and n.get("name") in NEW_ARGS))]
+            or (n.tag == "arg" and n.get("name") in NEW_ARGS) or n.get("name") == "ego_status_port")]
         self.assertEqual(others_a, others_b)
         self.assertGreater(len(kept(self.output)), 0)
+
+    def test_competition_network_ports(self):
+        # Competition Vehicle Status Sim 9088 -> User 9099; Ego Vehicle Status
+        # (1911) is not allowed.  Ctrl Cmd User 9094 -> Sim 9093.
+        text = OUTPUT.read_text(encoding="utf-8")
+        args = {a.get("name"): a.get("default") for a in self.output if a.tag == "arg"}
+        self.assertEqual(args["ego_status_port"], "9099")
+        self.assertEqual((args["control_remote_port"], args["control_source_port"]), ("9093", "9094"))
+        self.assertNotIn("1911", text)
+        source = {a.get("name"): a.get("default") for a in self.source if a.tag == "arg"}
+        for sensor in ("gps_port", "imu_port", "lane_info_port", "yolo_port"):
+            self.assertEqual(args[sensor], source[sensor], sensor)
 
     def test_wrappers_keep_every_team_parameter(self):
         for name, script, added in (
@@ -153,6 +165,46 @@ class PassThroughMatchesV61Test(unittest.TestCase):
             published += a["points"] is not None
         self.assertGreater(stops, 40)              # the stop and stale phases were exercised
         self.assertGreater(published, 200)
+
+
+class CompetitionStatusPacketTest(unittest.TestCase):
+    """The drive bridge parser reads Competition Vehicle Status (#MoraiInfo$).
+
+    Layout from car/src/path_planning morai_udp_competition_status.py: 181
+    bytes, or 229 with tyre data appended; the bridge reads the first 181.
+    """
+
+    @staticmethod
+    def packet(size):
+        import struct
+        packet = bytearray(size)
+        packet[:11] = b"#MoraiInfo$"
+        struct.pack_into("<I", packet, 11, 152 if size == 181 else 200)
+        struct.pack_into("<II", packet, 27, 123, 500_000_000)
+        struct.pack_into("<bb", packet, 35, 2, 4)
+        struct.pack_into("<f", packet, 37, 36.0)
+        struct.pack_into("<i", packet, 41, 10001)
+        struct.pack_into("<ff", packet, 45, 0.2, 0.0)
+        struct.pack_into("<fff", packet, 77, 10.0, 20.0, 3.0)
+        struct.pack_into("<fff", packet, 89, 1.0, 2.0, 90.0)
+        struct.pack_into("<fff", packet, 101, 36.0, 18.0, 3.6)
+        struct.pack_into("<f", packet, 137, -5.0)
+        packet[141:179] = b"A123".ljust(38, bytes(1))
+        packet[-2:] = bytes((13, 10))
+        return bytes(packet)
+
+    def test_bridge_parses_both_layouts(self):
+        sys.path.insert(0, str(REPO / "src/localization/morai_udp_drive_bridge/src"))
+        from morai_udp_drive_bridge.protocol import EGO_STATUS_PACKET_SIZE, parse_ego_vehicle_status
+        self.assertEqual(EGO_STATUS_PACKET_SIZE, 181)
+        for size in (181, 229):
+            # recvfrom(181) keeps the first 181 bytes of a 229-byte datagram.
+            m = parse_ego_vehicle_status(self.packet(size)[:EGO_STATUS_PACKET_SIZE])
+            self.assertAlmostEqual(m.velocity_x_kmh, 36.0, places=4)
+            self.assertAlmostEqual(m.signed_velocity_kmh, 36.0, places=4)
+            self.assertAlmostEqual(m.heading_deg, 90.0, places=4)
+            self.assertAlmostEqual(m.steer_deg, -5.0, places=4)
+            self.assertEqual((m.sec, m.nsec, m.gear, m.link_id), (123, 500_000_000, 4, "A123"))
 
 
 class TeamStateReadersTest(unittest.TestCase):
