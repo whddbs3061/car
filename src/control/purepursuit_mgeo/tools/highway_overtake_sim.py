@@ -54,7 +54,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]
 from curvature_speed_purepursuit import planner as cp  # noqa: E402
 from purepursuit_mgeo import (  # noqa: E402
     highway_overtake, highway_overtake_escape, highway_overtake_escape2,
-    highway_overtake_escape3,
+    highway_overtake_escape3, highway_overtake_escape4,
 )
 from purepursuit_mgeo.highway_overtake import (  # noqa: E402
     HighwayOvertakePlanner, Obstacle, OvertakeConfig, Route, align_with_controller,
@@ -62,7 +62,8 @@ from purepursuit_mgeo.highway_overtake import (  # noqa: E402
 # highway_overtake_node.py runs the stable planner, highway_overtake_escape_node.py
 # the lead-escape variant.
 PLANNERS = {"stable": highway_overtake, "escape": highway_overtake_escape,
-            "escape2": highway_overtake_escape2, "escape3": highway_overtake_escape3}
+            "escape2": highway_overtake_escape2, "escape3": highway_overtake_escape3,
+            "escape4": highway_overtake_escape4}
 from purepursuit_mgeo.motion import diagonal_progress  # noqa: E402
 
 # Road frame -> map frame, matching the real section (zone start = entry lane

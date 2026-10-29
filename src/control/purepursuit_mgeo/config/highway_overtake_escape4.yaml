@@ -1,0 +1,23 @@
+# highway_overtake_escape4_node parameters, loaded into ~ after
+# highway_overtake.yaml by integrated_obstacle_v61_overtake_escape4.launch:
+# only what escape4 sets differently is here.
+
+# ---- Gentler lane changes -----------------------------------------------------
+# Sideways speed at most max_lateral_speed_mps, so a faster change is flatter:
+# 3.0 / 2.6 / 2.3 / 2.1 deg and 85 / 98 / 112 / 123 m per lane at
+# 54 / 63 / 72 / 79 km/h (escape3, 3 deg fixed: 85 / 91 / 98 / 105 m).
+max_lateral_speed_mps: 0.8            # one lane (3.5 m) in 4.4 s or more
+plan_speed_margin_mps: 2.0            # designed for the speed now + this (not 79 km/h)
+max_entry_angle_deg: 3.0              # highway_overtake.yaml: 5.0
+max_lateral_accel_mps2: 1.0           # highway_overtake.yaml: 1.5
+
+# ---- Pass or merge behind ----------------------------------------------------
+# A left-lane car blocking the change that the ego would need longer than this
+# to get ahead of (gap / relative speed) is let past: slow below it, merge behind.
+pass_time_max_s: 3.0
+
+# ---- Line crossings (camera), as escape3 ---------------------------------------
+# Counted when the ego lane's left line becomes the line under the ego.
+crossing_merge_m: 15.0                # a second left line within this: a double line
+crossing_reacquire: true              # crossed line on the right: take the camera lane
+guard_lateral_accel_mps2: 2.5         # back off the final lane's left line

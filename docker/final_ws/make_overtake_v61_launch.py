@@ -25,7 +25,9 @@ highway_overtake_escape_node.py, the lead-escape planner variant,
 integrated_obstacle_v61_overtake_escape2.launch with highway_overtake_escape2_node.py
 and its lanes_file (map lane check), and
 integrated_obstacle_v61_overtake_escape3.launch with highway_overtake_escape3_node.py,
-which loads config/highway_overtake_escape3.yaml over overtake_config_file.
+which loads config/highway_overtake_escape3.yaml over overtake_config_file, and
+integrated_obstacle_v61_overtake_escape4.launch with highway_overtake_escape4_node.py
+and config/highway_overtake_escape4.yaml.
 
 Paths follow this file's workspace, so inside the container the outputs are
 derived from the container's own launch.
@@ -47,10 +49,12 @@ OUTPUT = LAUNCH_DIR / "integrated_obstacle_v61_overtake.launch"
 ESCAPE_OUTPUT = LAUNCH_DIR / "integrated_obstacle_v61_overtake_escape.launch"
 ESCAPE2_OUTPUT = LAUNCH_DIR / "integrated_obstacle_v61_overtake_escape2.launch"
 ESCAPE3_OUTPUT = LAUNCH_DIR / "integrated_obstacle_v61_overtake_escape3.launch"
+ESCAPE4_OUTPUT = LAUNCH_DIR / "integrated_obstacle_v61_overtake_escape4.launch"
 # escape2 checks its lane count against the MGeo lane centrelines.
 ESCAPE2_PARAMS = (("lanes_file", "$(find purepursuit_mgeo)/config/highway_lanes.json"),)
 # escape3 sets its gentler change geometry over the shared planner tuning.
 ESCAPE3_CONFIG = "$(find purepursuit_mgeo)/config/highway_overtake_escape3.yaml"
+ESCAPE4_CONFIG = "$(find purepursuit_mgeo)/config/highway_overtake_escape4.yaml"
 HIGHWAY_NODE = "highway_lane_strategy"
 CONTROLLER_NODE = "curvature_speed_purepursuit"
 FUSION_NODE = "curvature_signal_controller"
@@ -195,7 +199,8 @@ def main(argv) -> int:
             (OUTPUT, "highway_overtake_node.py", (), ""),
             (ESCAPE_OUTPUT, "highway_overtake_escape_node.py", (), ""),
             (ESCAPE2_OUTPUT, "highway_overtake_escape2_node.py", ESCAPE2_PARAMS, ""),
-            (ESCAPE3_OUTPUT, "highway_overtake_escape3_node.py", (), ESCAPE3_CONFIG)):
+            (ESCAPE3_OUTPUT, "highway_overtake_escape3_node.py", (), ESCAPE3_CONFIG),
+            (ESCAPE4_OUTPUT, "highway_overtake_escape4_node.py", (), ESCAPE4_CONFIG)):
         text = transform(source, highway_type, extra, config)
         if "--check" in argv:
             current = output.is_file() and output.read_text(encoding="utf-8") == text

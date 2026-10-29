@@ -75,7 +75,8 @@ class GeneratedV61LaunchTest(unittest.TestCase):
         for name in ("integrated_obstacle_v61_overtake.launch",
                      "integrated_obstacle_v61_overtake_escape.launch",
                      "integrated_obstacle_v61_overtake_escape2.launch",
-                     "integrated_obstacle_v61_overtake_escape3.launch"):
+                     "integrated_obstacle_v61_overtake_escape3.launch",
+                     "integrated_obstacle_v61_overtake_escape4.launch"):
             text = (LAUNCH_DIR / name).read_text(encoding="utf-8")
             root = ET.fromstring(text)
             args = {a.get("name"): a.get("default") for a in root if a.tag == "arg"}
@@ -117,18 +118,20 @@ class GeneratedV61LaunchTest(unittest.TestCase):
         self.assertEqual([canonical(e) for e in escape2 if e.tag != ET.Comment],
                          [canonical(e) for e in self.output if e.tag != ET.Comment])
 
-    def test_escape3_launch_adds_only_its_config(self):
-        escape3 = ET.parse(str(LAUNCH_DIR / "integrated_obstacle_v61_overtake_escape3.launch")).getroot()
-        highway = node(escape3, "highway_lane_strategy")
-        self.assertEqual(highway.get("type"), "highway_overtake_escape3_node.py")
-        loads = highway.findall("rosparam")
-        self.assertEqual([p.get("file") for p in loads], [
-            "$(arg overtake_config_file)",
-            "$(find purepursuit_mgeo)/config/highway_overtake_escape3.yaml"])
-        highway.remove(loads[1])
-        highway.set("type", "highway_overtake_node.py")
-        self.assertEqual([canonical(e) for e in escape3 if e.tag != ET.Comment],
-                         [canonical(e) for e in self.output if e.tag != ET.Comment])
+    def test_escape3_and_escape4_launches_add_only_their_config(self):
+        for variant in ("escape3", "escape4"):
+            launch = ET.parse(str(LAUNCH_DIR / ("integrated_obstacle_v61_overtake_%s.launch"
+                                                % variant))).getroot()
+            highway = node(launch, "highway_lane_strategy")
+            self.assertEqual(highway.get("type"), "highway_overtake_%s_node.py" % variant)
+            loads = highway.findall("rosparam")
+            self.assertEqual([p.get("file") for p in loads], [
+                "$(arg overtake_config_file)",
+                "$(find purepursuit_mgeo)/config/highway_overtake_%s.yaml" % variant])
+            highway.remove(loads[1])
+            highway.set("type", "highway_overtake_node.py")
+            self.assertEqual([canonical(e) for e in launch if e.tag != ET.Comment],
+                             [canonical(e) for e in self.output if e.tag != ET.Comment], variant)
 
     def test_highway_node_keeps_the_team_wiring(self):
         a, b = node(self.source, "highway_lane_strategy"), node(self.output, "highway_lane_strategy")

@@ -16,6 +16,8 @@
 #                                   (escape + entry double line + map lane check)
 #   bash run_overtake_v61.sh monitor-escape3|drive-escape3   ..._overtake_escape3.launch
 #                                   (escape2 + camera line crossings, gentler changes)
+#   bash run_overtake_v61.sh monitor-escape4|drive-escape4   ..._overtake_escape4.launch
+#                                   (escape3 + flatter changes at speed)
 #   bash run_overtake_v61.sh team-monitor|team-drive   the team's launch, same container
 #   bash run_overtake_v61.sh speed KMH                 ceiling outside the zone (max_speed_kph)
 #   bash run_overtake_v61.sh highway CRUISE_KMH [MAX_KMH]   highway zone speeds
@@ -32,6 +34,7 @@ LAUNCH=integrated_obstacle_v61_overtake.launch
 ESCAPE_LAUNCH=integrated_obstacle_v61_overtake_escape.launch
 ESCAPE2_LAUNCH=integrated_obstacle_v61_overtake_escape2.launch
 ESCAPE3_LAUNCH=integrated_obstacle_v61_overtake_escape3.launch
+ESCAPE4_LAUNCH=integrated_obstacle_v61_overtake_escape4.launch
 TEAM_LAUNCH=integrated_obstacle_v61.launch
 MANIFEST=docker/final_ws/team_v61_manifest.txt
 FILES=(
@@ -39,15 +42,18 @@ FILES=(
   src/control/purepursuit_mgeo/src/purepursuit_mgeo/highway_overtake_escape.py
   src/control/purepursuit_mgeo/src/purepursuit_mgeo/highway_overtake_escape2.py
   src/control/purepursuit_mgeo/src/purepursuit_mgeo/highway_overtake_escape3.py
+  src/control/purepursuit_mgeo/src/purepursuit_mgeo/highway_overtake_escape4.py
   src/control/purepursuit_mgeo/src/purepursuit_mgeo/highway_zone.py
   src/control/purepursuit_mgeo/scripts/highway_overtake_node.py
   src/control/purepursuit_mgeo/scripts/highway_overtake_escape_node.py
   src/control/purepursuit_mgeo/scripts/highway_overtake_escape2_node.py
   src/control/purepursuit_mgeo/scripts/highway_overtake_escape3_node.py
+  src/control/purepursuit_mgeo/scripts/highway_overtake_escape4_node.py
   src/control/purepursuit_mgeo/scripts/curvature_pp_overtake_node.py
   src/control/purepursuit_mgeo/scripts/maneuver_fusion_overtake_node.py
   src/control/purepursuit_mgeo/config/highway_overtake.yaml
   src/control/purepursuit_mgeo/config/highway_overtake_escape3.yaml
+  src/control/purepursuit_mgeo/config/highway_overtake_escape4.yaml
   src/control/purepursuit_mgeo/config/highway_lanes.json
   src/control/purepursuit_mgeo/config/route_mission_regions_overtake.json
   src/control/purepursuit_mgeo/tools/highway_overtake_sim.py
@@ -57,13 +63,14 @@ FILES=(
   src/control/purepursuit_mgeo/test/test_highway_overtake_escape.py
   src/control/purepursuit_mgeo/test/test_highway_overtake_escape2.py
   src/control/purepursuit_mgeo/test/test_highway_overtake_escape3.py
+  src/control/purepursuit_mgeo/test/test_highway_overtake_escape4.py
   src/control/purepursuit_mgeo/test/test_overtake_v61.py
   docker/final_ws/make_overtake_launch.py
   docker/final_ws/make_overtake_v61_launch.py
   "$MANIFEST"
 )
 SCRIPTS=(highway_overtake_node.py highway_overtake_escape_node.py highway_overtake_escape2_node.py
-         highway_overtake_escape3_node.py
+         highway_overtake_escape3_node.py highway_overtake_escape4_node.py
          curvature_pp_overtake_node.py
          maneuver_fusion_overtake_node.py)
 
@@ -78,7 +85,7 @@ exists() { "${DOCKER[@]}" container inspect "$1" >/dev/null 2>&1; }
 running() { [[ "$("${DOCKER[@]}" inspect --format '{{.State.Running}}' "$1" 2>/dev/null || true)" == true ]]; }
 
 if [[ "$ACTION" == help || "$ACTION" == -h || "$ACTION" == --help ]]; then
-  sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit 0
 fi
 
@@ -152,7 +159,7 @@ check_copy() {
   for script in "${SCRIPTS[@]}"; do
     ros "$CONTAINER_NAME" bash -c "$ros_env && python3 -c \"import roslib.packages as p; m = p.find_node('purepursuit_mgeo', '$script'); assert len(m) == 1, m; print('NODE_OK', m[0])\""
   done
-  for file in "$LAUNCH" "$ESCAPE_LAUNCH" "$ESCAPE2_LAUNCH" "$ESCAPE3_LAUNCH"; do
+  for file in "$LAUNCH" "$ESCAPE_LAUNCH" "$ESCAPE2_LAUNCH" "$ESCAPE3_LAUNCH" "$ESCAPE4_LAUNCH"; do
     NODES="$(ros "$CONTAINER_NAME" bash -c "$ros_env && roslaunch --nodes morai_bringup $file workspace_path:=$V61")"
     for name in /highway_lane_strategy /curvature_speed_purepursuit /curvature_signal_controller; do
       grep -qx "$name" <<<"$NODES" || die "launch check failed ($file), $name missing: $NODES"
@@ -228,6 +235,8 @@ case "$ACTION" in
   drive-escape2) launch "$ESCAPE2_LAUNCH" true "${HIGHWAY_ARGS[@]}" ;;
   monitor-escape3) launch "$ESCAPE3_LAUNCH" false "${HIGHWAY_ARGS[@]}" ;;
   drive-escape3) launch "$ESCAPE3_LAUNCH" true "${HIGHWAY_ARGS[@]}" ;;
+  monitor-escape4) launch "$ESCAPE4_LAUNCH" false "${HIGHWAY_ARGS[@]}" ;;
+  drive-escape4) launch "$ESCAPE4_LAUNCH" true "${HIGHWAY_ARGS[@]}" ;;
   team-monitor) launch "$TEAM_LAUNCH" false ;;
   team-drive) launch "$TEAM_LAUNCH" true ;;
   remove)
