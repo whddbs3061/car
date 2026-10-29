@@ -45,6 +45,7 @@ FILES=(
   src/control/purepursuit_mgeo/config/highway_lanes.json
   src/control/purepursuit_mgeo/config/route_mission_regions_overtake.json
   src/control/purepursuit_mgeo/tools/highway_overtake_sim.py
+  src/control/purepursuit_mgeo/tools/make_highway_lanes.py
   src/control/purepursuit_mgeo/test/test_highway_overtake.py
   src/control/purepursuit_mgeo/test/test_highway_overtake_node.py
   src/control/purepursuit_mgeo/test/test_highway_overtake_escape.py
