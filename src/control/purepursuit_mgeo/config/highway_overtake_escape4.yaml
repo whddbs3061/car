@@ -21,3 +21,10 @@ pass_time_max_s: 3.0
 crossing_merge_m: 15.0                # a second left line within this: a double line
 crossing_reacquire: true              # crossed line on the right: take the camera lane
 guard_lateral_accel_mps2: 2.5         # back off the final lane's left line
+
+# ---- Highway end: A2256W000153 end (70.21, -365.75) -----------------------------
+# After the zone, slow to 28 km/h by the highway end (30 km/h to the toll gate).
+highway_end_s: 1741.721               # the team's highway_route_end_s_m
+highway_end_speed_mps: 7.78           # 28 km/h
+highway_end_decel_mps2: 1.0
+highway_end_hold_m: 10.0              # 28 km/h this far before the end

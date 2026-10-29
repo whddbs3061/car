@@ -5,6 +5,7 @@ Run from src/control/purepursuit_mgeo:
     PYTHONPATH=src python -m unittest discover -s test -p "test_highway_overtake_escape3.py" -v
 """
 import dataclasses
+import math
 from pathlib import Path
 import sys
 from types import SimpleNamespace as NS
@@ -184,6 +185,51 @@ class EscapeThreeNodeTest(unittest.TestCase):
         self.assertNotIsInstance(node.planner, escape2.HighwayOvertakePlanner)
         self.assertEqual(node.planner.cfg.max_entry_angle_deg, 3.0)
         self.assertTrue(node.planner.cfg.crossing_reacquire)
+
+
+class HighwayEndTest(unittest.TestCase):
+    """28 km/h at the highway end (A2256W000153 end); 30 km/h to the toll gate beyond."""
+
+    def planner(self, state):
+        route = [(float(x), 0.0) for x in range(-50, 2000, 5)]
+        p = escape3.HighwayOvertakePlanner(escape3.OvertakeConfig(), route)
+        p.state = state
+        return p
+
+    def test_cap_toward_the_highway_end(self):
+        p = self.planner("DONE")
+        cfg = p.cfg
+        end = cfg.highway_end_s
+        self.assertAlmostEqual(p._highway_end_cap(end - 5.0), cfg.highway_end_speed_mps)
+        self.assertAlmostEqual(p._highway_end_cap(end - 110.0),
+                               math.sqrt(cfg.highway_end_speed_mps**2 + 2.0*1.0*100.0))
+        self.assertIsNone(p._highway_end_cap(end + 1.0))
+        self.assertIsNone(self.planner("FOLLOW")._highway_end_cap(end - 5.0))
+
+    def test_node_pass_through_speed_is_capped(self):
+        from test_highway_overtake_node import Clock, load_node, overtake_params
+        clock = Clock()
+        extra = {"~" + k: v for k, v in
+                 yaml.safe_load(ESCAPE3_CONFIG.read_text(encoding="utf-8")).items()}
+        wrapper, _pubs = load_node("highway_overtake_escape3_node", overtake_params(**extra), clock)
+        wrapper.node.time = NS(time=lambda: clock.now)
+        node = wrapper.node.HighwayOvertakeNode()
+        node.planner.pass_through_cap_mps = 5.0
+        self.assertAlmostEqual(node._limit_speed_rate(12.0, 100.0), 5.0)
+        node.planner.pass_through_cap_mps = None
+        self.assertAlmostEqual(node._limit_speed_rate(30.0, 100.0), node.cruise_speed_mps)
+
+    def test_simulated_speed_at_the_highway_end(self):
+        import highway_overtake_sim as sim
+        cfg = sim.default_config(sim.GLOBAL_MAP, escape3)
+        end_x = sim.ZONE_END_X + 100.0          # on the simulated road
+        end = sim.Route(sim.GLOBAL_MAP).s_of_xy(*sim.road_to_map(end_x, sim.global_path_y(end_x)))
+        r = sim.run(sim.ALL_SCENARIOS["real_camera"], 0, record=True, controller="mission",
+                    planner="escape3", cfg_overrides={"highway_end_s": end})
+        self.assertEqual(sim.verdict(r), [])
+        at_end = next(p for p in r["_log"] if p["x"] >= end_x)
+        self.assertLessEqual(at_end["v"]*3.6, 30.0)
+        self.assertGreaterEqual(at_end["v"]*3.6, 26.0)
 
 
 if __name__ == "__main__":

@@ -215,6 +215,15 @@ class OvertakeConfig:
     crossing_merge_m: float = 15.0
     crossing_reacquire: bool = True
     guard_lateral_accel_mps2: float = 2.5
+    # Highway end: the end of A2256W000153 at route s 1741.721 of the
+    # competition global path (the team's highway_route_end_s_m; <= 0: off).
+    # After the zone the pass-through speed brakes at highway_end_decel_mps2
+    # to highway_end_speed_mps, reached highway_end_hold_m before the end:
+    # the toll plaza beyond is limited to 30 km/h.
+    highway_end_s: float = 1741.721
+    highway_end_speed_mps: float = 7.78
+    highway_end_decel_mps2: float = 1.0
+    highway_end_hold_m: float = 10.0
 
     # The zone end is a lane funnel: lanes short of the final one end there.
     # Within deadline_window_m of the last point where a change still fits,
@@ -941,6 +950,7 @@ class HighwayOvertakePlanner:
         self.last_left_at: Optional[float] = None
         self.reinit_ref = False
         self.guard = False
+        self.pass_through_cap_mps: Optional[float] = None
 
     # ----- inputs -------------------------------------------------------
     def on_odom(self, t: float, x: float, y: float, yaw: float, speed: float) -> None:
@@ -1699,6 +1709,10 @@ class HighwayOvertakePlanner:
         target = cfg.cruise_speed_mps
         follow = {"lead": None}
         emergency = False
+        # After the zone: slow down for the highway end.
+        self.pass_through_cap_mps = self._highway_end_cap(route_s)
+        if self.pass_through_cap_mps is not None:
+            target = min(target, self.pass_through_cap_mps)
         if self.state == self.WAIT_LANE:
             out.active = True
             tracks = self._lane_tracks(LaneReference.from_pose(ego, cfg), 0, now, remember=False)
@@ -1716,7 +1730,18 @@ class HighwayOvertakePlanner:
             "waiting_camera_lane(%s)" % self.lane_reject)
         out.status = {"reason": reason, "follow": follow, "route_s": round(route_s, 1)}
         out.status.update(self._common_status(out, route_s))
+        if self.pass_through_cap_mps is not None:
+            out.status["highway_end_cap_mps"] = round(self.pass_through_cap_mps, 2)
         return out
+
+    def _highway_end_cap(self, route_s: float) -> Optional[float]:
+        """Speed limit after the zone up to the highway end: highway_end_speed_mps
+        from highway_end_hold_m before it, a highway_end_decel_mps2 curve before."""
+        cfg = self.cfg
+        if self.state != self.DONE or cfg.highway_end_s <= 0.0 or route_s >= cfg.highway_end_s:
+            return None
+        to_go = max(0.0, cfg.highway_end_s - cfg.highway_end_hold_m - route_s)
+        return math.sqrt(cfg.highway_end_speed_mps**2 + 2.0*cfg.highway_end_decel_mps2*to_go)
 
     def _slew(self, target: float, ego_speed: float, dt: float) -> float:
         cfg = self.cfg
