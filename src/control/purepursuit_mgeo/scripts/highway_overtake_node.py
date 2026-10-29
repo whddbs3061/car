@@ -382,7 +382,9 @@ class HighwayOvertakeNode:
             path = copy.deepcopy(base_path) if base_fresh else None
             if path is not None and len(path.poses) < 2:
                 path, stop = None, True
-                status["reason"] = "trajectory_path_too_short"
+            if path is None:
+                # Same label as the team's V9 highway_lane_strategy_node.
+                status["reason"] = "trajectory_path_missing_or_short"
             speed = self._limit_speed_rate(0.0 if stop else self.cruise_speed_mps, dt)
         reason = str(status.get("reason", status.get("state", "")))
 
