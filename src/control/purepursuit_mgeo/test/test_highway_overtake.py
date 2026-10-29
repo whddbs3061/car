@@ -249,11 +249,16 @@ class LaneFunnelTest(unittest.TestCase):
     def test_yield_merges_before_the_island(self):
         import highway_overtake_sim as sim
         scenario = sim.ALL_SCENARIOS["morai"]
-        held = sim.run(scenario, 3, {"deadline_mode": "off"}, record=False, controller="example")
+        # Without lead_escape this seed reaches the funnel in L2.
+        held = sim.run(scenario, 3, {"deadline_mode": "off", "lead_escape": False},
+                       record=False, controller="example")
         self.assertGreater(held["island_s"], 0.0)          # the first design drives onto it
-        yielded = sim.run(scenario, 3, record=False, controller="example")
+        yielded = sim.run(scenario, 3, {"lead_escape": False}, record=False, controller="example")
         self.assertEqual(sim.verdict(yielded), [])
         self.assertEqual(yielded["lane_changes"], 3)
+        escaped = sim.run(scenario, 3, record=False, controller="example")     # defaults
+        self.assertEqual(sim.verdict(escaped), [])
+        self.assertEqual(escaped["lane_changes"], 3)
 
     def test_drifted_frame_is_reacquired(self):
         # Frozen frame ~0.5 deg off: re-measurement failed for 130 m before.
