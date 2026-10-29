@@ -84,6 +84,14 @@ class GeneratedV61LaunchTest(unittest.TestCase):
             self.assertEqual([canonical(c) for c in a], [canonical(c) for c in b][:len(a)], name)
             self.assertEqual([c.get("name") for c in b][len(a):], added, name)
 
+    def test_escape_launch_differs_only_in_the_highway_node_type(self):
+        escape = ET.parse(str(LAUNCH_DIR / "integrated_obstacle_v61_overtake_escape.launch")).getroot()
+        self.assertEqual(node(escape, "highway_lane_strategy").get("type"),
+                         "highway_overtake_escape_node.py")
+        node(escape, "highway_lane_strategy").set("type", "highway_overtake_node.py")
+        self.assertEqual([canonical(e) for e in escape if e.tag != ET.Comment],
+                         [canonical(e) for e in self.output if e.tag != ET.Comment])
+
     def test_highway_node_keeps_the_team_wiring(self):
         a, b = node(self.source, "highway_lane_strategy"), node(self.output, "highway_lane_strategy")
         self.assertEqual(b.get("type"), "highway_overtake_node.py")

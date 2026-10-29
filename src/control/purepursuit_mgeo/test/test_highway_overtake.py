@@ -132,40 +132,6 @@ class GapAcceptanceTest(unittest.TestCase):
         self.assertTrue(self.decide(self.car(1, -8.0, 0, 25.0)).ok)
 
 
-class LeadEscapeTest(unittest.TestCase):
-    """A slower car ahead in the ego's lane is passed sideways, not braked for."""
-    ref = LaneReference(0.0, 0.0, 0.0, 0.0, 200.0, 200.0)
-
-    def decide(self, lead_s, escape, v=22.0):
-        cfg = OvertakeConfig(lead_escape=escape)
-        plan = make_change_plan(self.ref, 0.0, 0.0, 3.5, v, cfg)
-        lead = LaneTrack(1, lead_s, 0.0, 11.0, 4.6, 1.9, 0)      # 40 km/h, our lane
-        return evaluate_change(plan, 0.0, v, [lead], cfg)
-
-    def test_escapable_lead_allows_the_change_without_braking(self):
-        # Bumper gap ~32 m, closing 11 m/s: beside it before the gap is gone.
-        self.assertFalse(self.decide(38.0, escape=False).ok)    # before: match speed first
-        self.assertEqual(self.decide(38.0, escape=False).reason, "current_front")
-        self.assertTrue(self.decide(38.0, escape=True).ok)
-
-    def test_too_close_to_escape_still_waits(self):
-        decision = self.decide(28.0, escape=True)
-        self.assertFalse(decision.ok)
-        self.assertEqual(decision.reason, "current_front")
-
-    def test_left_lane_is_not_followed_while_changing_but_still_stops_when_close(self):
-        planner = HighwayOvertakePlanner(OvertakeConfig(), [(float(x), 0.0) for x in range(0, 1001, 10)])
-        def lead(gap):
-            return LaneTrack(1, planner.cfg.front_extent_m + gap + 2.3, 0.0, 11.0, 4.6, 1.9, 0)
-        target, emergency, info = planner._follow([lead(10.0)], 0.0, 1.0, 22.0, 3.5, escape_lane=0)
-        self.assertEqual((target, emergency, info["lead"]), (None, False, None))
-        _, emergency, _ = planner._follow([lead(1.0)], 0.0, 1.0, 22.0, 3.5, escape_lane=0)
-        self.assertTrue(emergency)
-        target, emergency, _ = planner._follow([lead(10.0)], 0.0, 1.0, 22.0, 3.5)   # off
-        self.assertTrue(emergency)                                  # TTC < 1 s
-        self.assertLess(target, 22.0)
-
-
 class IntegrationGateTest(unittest.TestCase):
     """route_mission_gate zone/request flags and the published state names."""
 
@@ -249,16 +215,11 @@ class LaneFunnelTest(unittest.TestCase):
     def test_yield_merges_before_the_island(self):
         import highway_overtake_sim as sim
         scenario = sim.ALL_SCENARIOS["morai"]
-        # Without lead_escape this seed reaches the funnel in L2.
-        held = sim.run(scenario, 3, {"deadline_mode": "off", "lead_escape": False},
-                       record=False, controller="example")
+        held = sim.run(scenario, 3, {"deadline_mode": "off"}, record=False, controller="example")
         self.assertGreater(held["island_s"], 0.0)          # the first design drives onto it
-        yielded = sim.run(scenario, 3, {"lead_escape": False}, record=False, controller="example")
+        yielded = sim.run(scenario, 3, record=False, controller="example")
         self.assertEqual(sim.verdict(yielded), [])
         self.assertEqual(yielded["lane_changes"], 3)
-        escaped = sim.run(scenario, 3, record=False, controller="example")     # defaults
-        self.assertEqual(sim.verdict(escaped), [])
-        self.assertEqual(escaped["lane_changes"], 3)
 
     def test_drifted_frame_is_reacquired(self):
         # Frozen frame ~0.5 deg off: re-measurement failed for 130 m before.

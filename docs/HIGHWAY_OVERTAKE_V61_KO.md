@@ -66,3 +66,20 @@ bash run_overtake_v61.sh highway 54 79.2     # 고속도로 순항 / 추월 상�
 - 상속 노드는 구간 신호가 신선하고 참일 때만 값을 바꾸고, 끝나면 원래 값으로 되돌림
 
 MORAI 실주행 검증은 아직 하지 않았습니다.
+
+## 6. 고속도로 노드 두 가지 (2026-10-30 추가)
+
+이전 노드는 그대로 두고, 앞차 회피 판을 별도 노드로 추가했습니다.
+
+| 실행 | launch | 고속도로 노드 | 플래너 |
+|---|---|---|---|
+| `drive` / `monitor` | `integrated_obstacle_v61_overtake.launch` | `highway_overtake_node.py` (이전 그대로) | `highway_overtake.py` (이전 그대로) |
+| `drive-escape` / `monitor-escape` | `integrated_obstacle_v61_overtake_escape.launch` | `highway_overtake_escape_node.py` | `highway_overtake_escape.py` |
+
+- **이전 파일:** `highway_overtake.py`, `highway_overtake_node.py`, `highway_overtake.yaml`, `integrated_obstacle_v61_overtake.launch`는 커밋 `347d0c9`와 바이트 단위로 같습니다.
+- **escape 플래너:** `highway_overtake.py`의 복사본에 앞차 회피만 더한 파일입니다. 두 파일을 `diff`하면 바뀐 부분(약 40줄)만 보입니다.
+  - 내 차로의 느린 앞차는 옆으로 빠지는 순간까지 범퍼 간격 3 m만 유지되면 변경을 시작합니다.
+  - 변경하는 동안 그 앞차 때문에 감속하지 않습니다(1.5 m 이내면 비상정지).
+- **escape 노드:** 이전 노드 파일을 그대로 불러오고 플래너만 escape 판으로 바꿔 끼웁니다. 토픽, 설정 파일, 상태 메시지는 같습니다.
+- **병합할 때:** launch의 고속도로 노드 `type`을 `highway_overtake_node.py` 또는 `highway_overtake_escape_node.py`로 고르면 됩니다.
+- **오프라인 결과(대회 트래픽 30판, `mission` 값):** 구간 통과 28.1 s → 24.7 s, 구간 최저 속도 42.7 → 53.2 km/h, 실패 0판.

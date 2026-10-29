@@ -52,9 +52,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]
                        / "experimental/curvature_speed_purepursuit/src"))
 
 from curvature_speed_purepursuit import planner as cp  # noqa: E402
+from purepursuit_mgeo import highway_overtake, highway_overtake_escape  # noqa: E402
 from purepursuit_mgeo.highway_overtake import (  # noqa: E402
     HighwayOvertakePlanner, Obstacle, OvertakeConfig, Route, align_with_controller,
 )
+# highway_overtake_node.py runs the stable planner, highway_overtake_escape_node.py
+# the lead-escape variant.
+PLANNERS = {"stable": highway_overtake, "escape": highway_overtake_escape}
 from purepursuit_mgeo.motion import diagonal_progress  # noqa: E402
 
 # Road frame -> map frame, matching the real section (zone start = entry lane
@@ -618,9 +622,9 @@ def boxes_overlap(a, b) -> bool:
 # ---------------------------------------------------------------------------
 # Closed loop
 # ---------------------------------------------------------------------------
-def default_config(route_points) -> OvertakeConfig:
+def default_config(route_points, module=highway_overtake) -> OvertakeConfig:
     route = Route(route_points)
-    cfg = OvertakeConfig(gate_required=True)
+    cfg = module.OvertakeConfig(gate_required=True)
     cfg.zone_start_s = route.s_of_xy(*road_to_map(ZONE_START_X, global_path_y(ZONE_START_X)))
     cfg.zone_end_s = route.s_of_xy(*road_to_map(ZONE_END_X, global_path_y(ZONE_END_X)))
     cfg.entry_taper_start_s = route.s_of_xy(*road_to_map(ENTRY_TAPER[0], 0.0))
@@ -629,15 +633,17 @@ def default_config(route_points) -> OvertakeConfig:
 
 
 def run(scenario: Scenario, seed: int, cfg_overrides: Optional[Dict] = None,
-        record: bool = True, controller: str = "mission", align: bool = True) -> Dict:
+        record: bool = True, controller: str = "mission", align: bool = True,
+        planner: str = "stable") -> Dict:
     rng = random.Random(seed)
-    cfg = default_config(GLOBAL_MAP)
+    module = PLANNERS[planner]
+    cfg = default_config(GLOBAL_MAP, module)
     for key, value in (cfg_overrides or {}).items():
         setattr(cfg, key, value)
     preset = CONTROLLERS[controller]
-    aligned = (align_with_controller(cfg, preset["lateral"], preset["accel"], preset["decel"])
-               if align else {})
-    planner = HighwayOvertakePlanner(cfg, GLOBAL_MAP)
+    aligned = (module.align_with_controller(cfg, preset["lateral"], preset["accel"],
+                                            preset["decel"]) if align else {})
+    planner = module.HighwayOvertakePlanner(cfg, GLOBAL_MAP)
     # The launch caps the controller at max(max_speed_kph, highway_max_speed_kph).
     ctrl = ControllerSim(preset, max(cfg.max_speed_mps, cfg.cruise_speed_mps))
     npcs = make_traffic(scenario, rng)
@@ -1067,8 +1073,11 @@ def main(argv=None) -> int:
                          "preset, default) or example (highway-test.env.example)")
     ap.add_argument("--no-align", action="store_true",
                     help="do not lower the planner's limits to the controller's")
+    ap.add_argument("--planner", default="stable", choices=sorted(PLANNERS),
+                    help="stable (highway_overtake_node.py, default) or escape "
+                         "(highway_overtake_escape_node.py)")
     args = ap.parse_args(argv)
-    options = dict(controller=args.controller, align=not args.no_align)
+    options = dict(controller=args.controller, align=not args.no_align, planner=args.planner)
     overrides = {}
     for item in args.set:
         key, value = item.split("=", 1)

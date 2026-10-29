@@ -10,6 +10,8 @@
 #   bash run_overtake_v61.sh setup     once: snapshot -> own image/container, install, check
 #   bash run_overtake_v61.sh update    after a code change: install and check again
 #   bash run_overtake_v61.sh monitor|drive   integrated_obstacle_v61_overtake.launch
+#   bash run_overtake_v61.sh monitor-escape|drive-escape   ..._overtake_escape.launch
+#                                   (lead-escape planner; the stable node is kept)
 #   bash run_overtake_v61.sh team-monitor|team-drive   the team's launch, same container
 #   bash run_overtake_v61.sh speed KMH                 ceiling outside the zone (max_speed_kph)
 #   bash run_overtake_v61.sh highway CRUISE_KMH [MAX_KMH]   highway zone speeds
@@ -23,12 +25,15 @@ ACTION="${1:-help}"
 [[ $# -eq 0 ]] || shift
 V61=/root/morai_integration_test/AutoVehicle/morai_ws
 LAUNCH=integrated_obstacle_v61_overtake.launch
+ESCAPE_LAUNCH=integrated_obstacle_v61_overtake_escape.launch
 TEAM_LAUNCH=integrated_obstacle_v61.launch
 MANIFEST=docker/final_ws/team_v61_manifest.txt
 FILES=(
   src/control/purepursuit_mgeo/src/purepursuit_mgeo/highway_overtake.py
+  src/control/purepursuit_mgeo/src/purepursuit_mgeo/highway_overtake_escape.py
   src/control/purepursuit_mgeo/src/purepursuit_mgeo/highway_zone.py
   src/control/purepursuit_mgeo/scripts/highway_overtake_node.py
+  src/control/purepursuit_mgeo/scripts/highway_overtake_escape_node.py
   src/control/purepursuit_mgeo/scripts/curvature_pp_overtake_node.py
   src/control/purepursuit_mgeo/scripts/maneuver_fusion_overtake_node.py
   src/control/purepursuit_mgeo/config/highway_overtake.yaml
@@ -36,12 +41,14 @@ FILES=(
   src/control/purepursuit_mgeo/tools/highway_overtake_sim.py
   src/control/purepursuit_mgeo/test/test_highway_overtake.py
   src/control/purepursuit_mgeo/test/test_highway_overtake_node.py
+  src/control/purepursuit_mgeo/test/test_highway_overtake_escape.py
   src/control/purepursuit_mgeo/test/test_overtake_v61.py
   docker/final_ws/make_overtake_launch.py
   docker/final_ws/make_overtake_v61_launch.py
   "$MANIFEST"
 )
-SCRIPTS=(highway_overtake_node.py curvature_pp_overtake_node.py maneuver_fusion_overtake_node.py)
+SCRIPTS=(highway_overtake_node.py highway_overtake_escape_node.py curvature_pp_overtake_node.py
+         maneuver_fusion_overtake_node.py)
 
 die() { echo "ERROR: $*" >&2; exit 2; }
 number() { [[ "$1" =~ ^[0-9]+([.][0-9]+)?$ && "$1" =~ [1-9] ]]; }
@@ -54,7 +61,7 @@ exists() { "${DOCKER[@]}" container inspect "$1" >/dev/null 2>&1; }
 running() { [[ "$("${DOCKER[@]}" inspect --format '{{.State.Running}}' "$1" 2>/dev/null || true)" == true ]]; }
 
 if [[ "$ACTION" == help || "$ACTION" == -h || "$ACTION" == --help ]]; then
-  sed -n '2,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit 0
 fi
 
@@ -128,9 +135,11 @@ check_copy() {
   for script in "${SCRIPTS[@]}"; do
     ros "$CONTAINER_NAME" bash -c "$ros_env && python3 -c \"import roslib.packages as p; m = p.find_node('purepursuit_mgeo', '$script'); assert len(m) == 1, m; print('NODE_OK', m[0])\""
   done
-  NODES="$(ros "$CONTAINER_NAME" bash -c "$ros_env && roslaunch --nodes morai_bringup $LAUNCH workspace_path:=$V61")"
-  for name in /highway_lane_strategy /curvature_speed_purepursuit /curvature_signal_controller; do
-    grep -qx "$name" <<<"$NODES" || die "launch check failed, $name missing: $NODES"
+  for file in "$LAUNCH" "$ESCAPE_LAUNCH"; do
+    NODES="$(ros "$CONTAINER_NAME" bash -c "$ros_env && roslaunch --nodes morai_bringup $file workspace_path:=$V61")"
+    for name in /highway_lane_strategy /curvature_speed_purepursuit /curvature_signal_controller; do
+      grep -qx "$name" <<<"$NODES" || die "launch check failed ($file), $name missing: $NODES"
+    done
   done
   echo "OVERTAKE_V61_CHECK_OK container=$CONTAINER_NAME"
 }
@@ -196,6 +205,8 @@ case "$ACTION" in
     ;;
   monitor) launch "$LAUNCH" false "${HIGHWAY_ARGS[@]}" ;;
   drive) launch "$LAUNCH" true "${HIGHWAY_ARGS[@]}" ;;
+  monitor-escape) launch "$ESCAPE_LAUNCH" false "${HIGHWAY_ARGS[@]}" ;;
+  drive-escape) launch "$ESCAPE_LAUNCH" true "${HIGHWAY_ARGS[@]}" ;;
   team-monitor) launch "$TEAM_LAUNCH" false ;;
   team-drive) launch "$TEAM_LAUNCH" true ;;
   remove)

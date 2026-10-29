@@ -115,11 +115,6 @@ class OvertakeConfig:
     rear_speed_margin_mps: float = 0.5
     lateral_margin_m: float = 0.3
     permission_hold_m: float = 40.0
-    # Escape a slower lead by the lane change instead of braking for it: the
-    # ego is not slowed for current-lane cars ahead while it changes, so a
-    # change needs only gap_front_min_m to them until it is beside them
-    # (false: match their speed first, as before).
-    lead_escape: bool = True
 
     # Lead following
     follow_standstill_m: float = 4.0
@@ -662,9 +657,6 @@ def evaluate_change(plan: ChangePlan, ego_s: float, v0: float,
     the ego at that instant, and the bumper gap must cover a minimum distance,
     a time gap and the braking distance needed to match speeds.  A track can
     therefore be passed (merge ahead of it) or let go by (merge behind it).
-    With lead_escape a current-lane car ahead is escaped sideways: the ego
-    does not follow it, and until the ego is beside it only the minimum gap
-    is required.
     """
     tracks = list(tracks)
     v_plan = max(plan.v_plan, cfg.min_plan_speed_mps)
@@ -696,17 +688,15 @@ def evaluate_change(plan: ChangePlan, ego_s: float, v0: float,
                     reach = half_w + 0.5*trk.width + cfg.lateral_margin_m
                     overlap = abs(trk.d - d_ego) < reach
                     front = s_trk >= center
-                    escaped = cfg.lead_escape and trk.lane == 0 and front
                     if front:
                         gap = (s_trk - 0.5*trk.length) - (s + cfg.front_extent_m)
-                        if not escaped \
-                                and (overlap or (abs(trk.d - plan.target_d) < reach and gap > 0.0)) \
+                        if (overlap or (abs(trk.d - plan.target_d) < reach and gap > 0.0)) \
                                 and (lead_gap is None or gap < lead_gap):
                             lead_gap, lead_v = gap, v_trk
                     if not overlap:
                         continue
                     if front:
-                        if escaped or v_trk >= v:   # escaped sideways, or pulling away
+                        if v_trk >= v:      # pulling away: the gap is opening
                             need = cfg.gap_front_min_m + cfg.gap_open_time_s*v
                         else:
                             need = (cfg.gap_front_min_m + cfg.gap_time_s*v
@@ -914,8 +904,7 @@ class HighwayOvertakePlanner:
         return tracks
 
     def _follow(self, tracks: Optional[List[LaneTrack]], ego_s: float, ego_d: float,
-                v: float, preview_d: Optional[float] = None,
-                escape_lane: Optional[int] = None) -> Tuple[Optional[float], bool, Dict]:
+                v: float, preview_d: Optional[float] = None) -> Tuple[Optional[float], bool, Dict]:
         """Lead-vehicle speed (gap control).
 
         Leads are tracks overlapping the ego footprint laterally (ego_d) and,
@@ -923,10 +912,7 @@ class HighwayOvertakePlanner:
         (preview_d).  A target-lane track still alongside is not a lead: the
         committed plan only reaches its lane after it has gone.  Only a lead
         in the ego's path can trigger the emergency stop; a target-lane lead
-        the ego does not overlap yet only lowers the speed.  Cars of
-        escape_lane (the lane being left, lead_escape) are no leads: the
-        committed change passes them sideways, and only a gap below
-        emergency_gap_m in the ego's path still stops the ego.
+        the ego does not overlap yet only lowers the speed.
         """
         cfg = self.cfg
         if tracks is None:
@@ -945,14 +931,9 @@ class HighwayOvertakePlanner:
             closing = v - trk.v
             ttc = g/closing if closing > 0.1 else float("inf")
             target = clamp(trk.v + cfg.follow_gain*(g-desired), 0.0, cfg.max_speed_mps)
-            if escape_lane is not None and trk.lane == escape_lane:
-                if not (in_path and closing > -0.3 and g < cfg.emergency_gap_m):
-                    continue
-                emergency = True
-            else:
-                # A lead pulling away is no emergency, however close it is.
-                emergency = in_path and closing > -0.3 and (
-                    g < cfg.emergency_gap_m or ttc < cfg.emergency_ttc_s)
+            # A lead pulling away is no emergency, however close it is.
+            emergency = in_path and closing > -0.3 and (
+                g < cfg.emergency_gap_m or ttc < cfg.emergency_ttc_s)
             if best is None or (emergency, -target) > (best[1], -best[0]):
                 best = (target, emergency, {
                     "lead": trk.id, "gap": round(g, 2), "desired_gap": round(desired, 2),
@@ -1189,10 +1170,7 @@ class HighwayOvertakePlanner:
             self.deadline = True
             events.append("lane ends ahead: deadline mode '%s'" % cfg.deadline_mode)
         preview = self.plan.target_d if self.state == self.CHANGE else None
-        # The lane being left: 0 while changing, -1 once the change is counted.
-        escape = ({self.CHANGE: 0, self.REACQUIRE: -1}.get(self.state)
-                  if cfg.lead_escape else None)
-        follow_v, emergency, follow = self._follow(tracks, ego_s, ego_d, ev, preview, escape)
+        follow_v, emergency, follow = self._follow(tracks, ego_s, ego_d, ev, preview)
         caps = self._speed_caps(route_s, tracks_fresh)
         if self.deadline and self.state == self.CHASE:
             caps["deadline"] = cfg.end_speed_mps       # a slower change is shorter
