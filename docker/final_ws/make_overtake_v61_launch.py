@@ -21,14 +21,16 @@ highway_lateral_accel_mps2, overtake_config_file.  The zone flag is
 /highway_lane_strategy/zone_active; without it the team's behaviour applies.
 
 integrated_obstacle_v61_overtake_escape.launch is the same with
-highway_overtake_escape_node.py, the lead-escape planner variant, and
+highway_overtake_escape_node.py, the lead-escape planner variant,
 integrated_obstacle_v61_overtake_escape2.launch with highway_overtake_escape2_node.py
-and its lanes_file (map lane check).
+and its lanes_file (map lane check), and
+integrated_obstacle_v61_overtake_escape3.launch with highway_overtake_escape3_node.py,
+which loads config/highway_overtake_escape3.yaml over overtake_config_file.
 
 Paths follow this file's workspace, so inside the container the outputs are
 derived from the container's own launch.
 
-    python make_overtake_v61_launch.py            # write both launches
+    python make_overtake_v61_launch.py            # write the launches
     python make_overtake_v61_launch.py --check    # exit 1 if one is stale
 """
 import sys
@@ -44,8 +46,11 @@ SOURCE = LAUNCH_DIR / "integrated_obstacle_v61.launch"
 OUTPUT = LAUNCH_DIR / "integrated_obstacle_v61_overtake.launch"
 ESCAPE_OUTPUT = LAUNCH_DIR / "integrated_obstacle_v61_overtake_escape.launch"
 ESCAPE2_OUTPUT = LAUNCH_DIR / "integrated_obstacle_v61_overtake_escape2.launch"
+ESCAPE3_OUTPUT = LAUNCH_DIR / "integrated_obstacle_v61_overtake_escape3.launch"
 # escape2 checks its lane count against the MGeo lane centrelines.
 ESCAPE2_PARAMS = (("lanes_file", "$(find purepursuit_mgeo)/config/highway_lanes.json"),)
+# escape3 sets its gentler change geometry over the shared planner tuning.
+ESCAPE3_CONFIG = "$(find purepursuit_mgeo)/config/highway_overtake_escape3.yaml"
 HIGHWAY_NODE = "highway_lane_strategy"
 CONTROLLER_NODE = "curvature_speed_purepursuit"
 FUSION_NODE = "curvature_signal_controller"
@@ -90,7 +95,7 @@ def _append(node, params):
 
 
 def transform(text: str, highway_type: str = "highway_overtake_node.py",
-              extra_params=()) -> str:
+              extra_params=(), extra_config: str = "") -> str:
     root = ET.fromstring(text, parser=ET.XMLParser(target=ET.TreeBuilder(insert_comments=True)))
     if root.tag != "launch":
         raise ValueError("not a launch file")
@@ -142,6 +147,8 @@ def transform(text: str, highway_type: str = "highway_overtake_node.py",
     node.text = indent
     node.tail = old.tail
     children = [_element("rosparam", indent, command="load", file="$(arg overtake_config_file)")]
+    if extra_config:
+        children.append(_element("rosparam", indent, command="load", file=extra_config))
     for name in COPIED_PARAMS:
         found = [p for p in old.findall("param") if p.get("name") == name]
         if found:
@@ -184,11 +191,12 @@ def main(argv) -> int:
         return 2
     source = SOURCE.read_text(encoding="utf-8")
     stale = 0
-    for output, highway_type, extra in (
-            (OUTPUT, "highway_overtake_node.py", ()),
-            (ESCAPE_OUTPUT, "highway_overtake_escape_node.py", ()),
-            (ESCAPE2_OUTPUT, "highway_overtake_escape2_node.py", ESCAPE2_PARAMS)):
-        text = transform(source, highway_type, extra)
+    for output, highway_type, extra, config in (
+            (OUTPUT, "highway_overtake_node.py", (), ""),
+            (ESCAPE_OUTPUT, "highway_overtake_escape_node.py", (), ""),
+            (ESCAPE2_OUTPUT, "highway_overtake_escape2_node.py", ESCAPE2_PARAMS, ""),
+            (ESCAPE3_OUTPUT, "highway_overtake_escape3_node.py", (), ESCAPE3_CONFIG)):
+        text = transform(source, highway_type, extra, config)
         if "--check" in argv:
             current = output.is_file() and output.read_text(encoding="utf-8") == text
             stale += not current

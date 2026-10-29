@@ -1,0 +1,15 @@
+# highway_overtake_escape3_node parameters, loaded into ~ after
+# highway_overtake.yaml by integrated_obstacle_v61_overtake_escape3.launch:
+# only what escape3 sets differently is here.
+
+# ---- Gentler lane changes -----------------------------------------------------
+# A smaller angle of the diagonal part and longer ramps.  A change of one lane
+# is then 85 / 98 / 105 m long at 54 / 72 / 79 km/h (5.0 and 1.5: 60 / 75 / 82 m).
+max_entry_angle_deg: 3.0              # highway_overtake.yaml: 5.0
+max_lateral_accel_mps2: 1.0           # highway_overtake.yaml: 1.5
+
+# ---- Line crossings (camera) -------------------------------------------------
+# Counted when the ego lane's left line becomes the line under the ego.
+crossing_merge_m: 15.0                # a second left line within this: a double line
+crossing_reacquire: true              # crossed line on the right: take the camera lane
+guard_lateral_accel_mps2: 2.5         # back off the final lane's left line

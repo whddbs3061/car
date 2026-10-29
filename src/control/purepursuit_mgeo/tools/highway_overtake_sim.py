@@ -54,6 +54,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]
 from curvature_speed_purepursuit import planner as cp  # noqa: E402
 from purepursuit_mgeo import (  # noqa: E402
     highway_overtake, highway_overtake_escape, highway_overtake_escape2,
+    highway_overtake_escape3,
 )
 from purepursuit_mgeo.highway_overtake import (  # noqa: E402
     HighwayOvertakePlanner, Obstacle, OvertakeConfig, Route, align_with_controller,
@@ -61,7 +62,7 @@ from purepursuit_mgeo.highway_overtake import (  # noqa: E402
 # highway_overtake_node.py runs the stable planner, highway_overtake_escape_node.py
 # the lead-escape variant.
 PLANNERS = {"stable": highway_overtake, "escape": highway_overtake_escape,
-            "escape2": highway_overtake_escape2}
+            "escape2": highway_overtake_escape2, "escape3": highway_overtake_escape3}
 from purepursuit_mgeo.motion import diagonal_progress  # noqa: E402
 
 # Road frame -> map frame, matching the real section (zone start = entry lane
@@ -301,6 +302,16 @@ class Scenario:
     # Line type the camera reports for the entry divider (a solid+broken
     # double line in MGeo); None: its real kind.
     entry_divider_type: Optional[str] = None
+    # Line labels like real_lane (post_processing/real_lane.py
+    # assign_lane_ids): the line within 0.5 m of the ego's axis 7 m ahead is
+    # lane 0 (straddling_lane), +-1 the nearest beyond it and, with no line
+    # under the ego, only within 3.15 m.  "sim": a line within 0.45 m 1 m ahead.
+    camera_rule: str = "sim"
+    # The entry divider seen as its two lines 0.3 m apart (broken on the entry
+    # side, solid on the L1 side) instead of one.
+    entry_double_line: bool = False
+    # Camera yaw calibration error: every line seen turned left by this [deg].
+    camera_yaw_bias_deg: float = 0.0
     extra_npcs: List[Tuple[float, float, float]] = field(default_factory=list)  # x, y, kmh
     # NPCs follow the vehicle ahead (ego included) with the IDM using MORAI's
     # SafetyDist as standstill gap and TTC as time gap; False: never brake.
@@ -330,6 +341,14 @@ SCENARIOS = {
     "entry_solid": Scenario(
         "entry_solid", "sample traffic; the camera reads the entry double line as solid",
         MORAI_TRAFFIC, entry_divider_type="solid"),
+    "real_camera": Scenario(
+        "real_camera", "sample traffic; line labels like real_lane (the line under the ego "
+        "at 7 m, track ids), the entry double line seen as two lines",
+        MORAI_TRAFFIC, camera_rule="real_lane", entry_double_line=True),
+    "camera_yaw_bias": Scenario(
+        "camera_yaw_bias", "real_camera with every line seen turned 1.5 deg to the left "
+        "(camera yaw calibration error)",
+        MORAI_TRAFFIC, camera_rule="real_lane", entry_double_line=True, camera_yaw_bias_deg=1.5),
 }
 
 # Invented stress cases, not in the sample scenario; NPCs never brake.
@@ -450,7 +469,19 @@ class CameraSim:
         self.latency = latency_s
         self.next_capture = 0.0
         self.ages: Dict[str, int] = {}
+        self.track_ids: Dict[str, int] = {}
+        self.last_seen: Dict[str, float] = {}
+        self.next_track = 1
         self.queue: List[Tuple[float, Dict]] = []
+
+    def _sources(self):
+        """(line, name, lateral shift, painted kind) of every line the camera sees."""
+        for line in LINES:
+            if line.name == "entry_divider" and self.scenario.entry_double_line:
+                yield line, line.name, -0.15, None
+                yield line, "entry_divider_solid", 0.15, "solid"
+            else:
+                yield line, line.name, 0.0, None
 
     def update(self, t: float, ego_road: Tuple[float, float, float]) -> List[Tuple[float, Dict]]:
         if t >= self.next_capture:
@@ -474,10 +505,11 @@ class CameraSim:
                         left_boundary_points=[], right_boundary_points=[])
             return base
         c, s = math.cos(eyaw), math.sin(eyaw)
+        bias = math.tan(math.radians(self.scenario.camera_yaw_bias_deg))
         fits = []
-        for line in LINES:
+        for line, name, shift, painted in self._sources():
             xs_road = np.arange(ex-5.0, ex+60.0, 1.0)
-            ys_road = line.y_at(xs_road)
+            ys_road = line.y_at(xs_road) + shift
             dx, dy = xs_road-ex, ys_road-ey
             xe, ye = c*dx + s*dy, -s*dx + c*dy
             keep = (xe >= CAMERA_X_RANGE[0]) & (xe <= CAMERA_X_RANGE[1]) & np.isfinite(ye)
@@ -485,14 +517,14 @@ class CameraSim:
                 continue
             coef = np.polyfit(xe[keep], ye[keep], 2)
             coef[2] += self.rng.gauss(0.0, self.scenario.camera_noise)
-            coef[1] += self.rng.gauss(0.0, self.scenario.camera_noise/15.0)
+            coef[1] += self.rng.gauss(0.0, self.scenario.camera_noise/15.0) + bias
             y7 = float(np.polyval(coef, 7.0))
             if abs(y7) > 9.0:
                 continue
-            kind = line.kind_at(ex + 10.0) or "solid"
-            if line.name == "entry_divider" and self.scenario.entry_divider_type:
+            kind = painted or line.kind_at(ex + 10.0) or "solid"
+            if name == "entry_divider" and self.scenario.entry_divider_type:
                 kind = self.scenario.entry_divider_type
-            fits.append((y7, float(np.polyval(coef, 1.0)), line.name, coef, kind,
+            fits.append((y7, float(np.polyval(coef, 1.0)), name, coef, kind,
                          float(xe[keep].max())))
         seen = {f[2] for f in fits}
         for name in list(self.ages):
@@ -500,6 +532,11 @@ class CameraSim:
                 del self.ages[name]
         for f in fits:
             self.ages[f[2]] = self.ages.get(f[2], 0) + 1
+            # real_lane's tracker: a line keeps its track id while it is seen.
+            if f[2] not in self.track_ids or t - self.last_seen.get(f[2], t) > 0.5:
+                self.track_ids[f[2]] = self.next_track
+                self.next_track += 1
+            self.last_seen[f[2]] = t
         fits.sort(key=lambda f: f[0])
 
         def meta(f):
@@ -508,17 +545,27 @@ class CameraSim:
             return {"detected": True, "type": LANE_TYPE[f[4]], "dashed": f[4] == "dashed",
                     "coef": [round(float(v), 8) for v in f[3]],
                     "x_range_m": [CAMERA_X_RANGE[0], round(f[5], 2)],
-                    "age": self.ages[f[2]], "confidence": 0.9,
+                    "age": self.ages[f[2]], "confidence": 0.9, "track_id": self.track_ids[f[2]],
                     "from_guide": False, "coasted": False}
 
-        straddle = next((f for f in fits if abs(f[1]) < 0.45), None)
-        if straddle is not None:
-            # real_lane: the straddled line is lane 0, left/right are beyond it.
-            left = next((f for f in fits if f[0] > straddle[0]), None)
-            right = next((f for f in reversed(fits) if f[0] < straddle[0]), None)
+        if self.scenario.camera_rule == "real_lane":
+            near = [f for f in fits if abs(f[0]) <= 0.5]
+            straddle = min(near, key=lambda f: abs(f[0])) if near else None
+            rest = [f for f in fits if f is not straddle]
+            left = next((f for f in rest if f[0] >= 0.0), None)
+            right = next((f for f in reversed(rest) if f[0] < 0.0), None)
+            if straddle is None:
+                left = left if left is not None and left[0] <= 3.15 else None
+                right = right if right is not None and right[0] >= -3.15 else None
         else:
-            left = next((f for f in fits if f[0] > 0.0), None)
-            right = next((f for f in reversed(fits) if f[0] < 0.0), None)
+            straddle = next((f for f in fits if abs(f[1]) < 0.45), None)
+            if straddle is not None:
+                # real_lane: the straddled line is lane 0, left/right are beyond it.
+                left = next((f for f in fits if f[0] > straddle[0]), None)
+                right = next((f for f in reversed(fits) if f[0] < straddle[0]), None)
+            else:
+                left = next((f for f in fits if f[0] > 0.0), None)
+                right = next((f for f in reversed(fits) if f[0] < 0.0), None)
 
         def points(f):
             if f is None:
@@ -707,6 +754,7 @@ def run(scenario: Scenario, seed: int, cfg_overrides: Optional[Dict] = None,
     v_zone_end = None
     commits = []
     lane_entered_l4 = False
+    target_y, overshoot = None, 0.0
 
     while t < 90.0 and ex < SCORE_END_X + 40.0:
         # ---- sensors ----------------------------------------------------
@@ -742,6 +790,7 @@ def run(scenario: Scenario, seed: int, cfg_overrides: Optional[Dict] = None,
                 if "committed" in text:
                     commits.append({"t": round(t, 2), "x": round(ex, 1), "lane_from": int(round(ey/LANE_W)),
                                     "gap": (out.status.get("gap") or {}), "v": round(ev, 2)})
+                    target_y = (int(round(ey/LANE_W)) + 1)*LANE_W
             if out.path:
                 ctrl.set_path(out.path)
             if record and (not frames or t - frames[-1]["t"] >= 0.099):
@@ -808,6 +857,8 @@ def run(scenario: Scenario, seed: int, cfg_overrides: Optional[Dict] = None,
             min_speed = ev if min_speed is None else min(min_speed, ev)
         if scored and cy > 12.25 - 0.3:
             lane_entered_l4 = True
+        if target_y is not None and ZONE_START_X <= ex <= 340.0:
+            overshoot = max(overshoot, cy - target_y)
         edge = island_edge_y(cx)
         if scored and math.isfinite(edge) and LANE_W/2 < cy < edge:
             island_s += dt
@@ -848,6 +899,7 @@ def run(scenario: Scenario, seed: int, cfg_overrides: Optional[Dict] = None,
         "min_speed_kmh": None if min_speed is None else round(min_speed*3.6, 1),
         "entered_forbidden_lane": lane_entered_l4,
         "lane_changes": len(commits),
+        "max_overshoot_m": round(overshoot, 2),
         "commits": commits,
         "zone_time_s": None if (t_zone_start is None or t_zone_end is None)
         else round(t_zone_end - t_zone_start, 2),

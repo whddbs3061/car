@@ -73,7 +73,9 @@ class GeneratedV61LaunchTest(unittest.TestCase):
         # Competition Vehicle Status Sim 9088 -> User 9099; Ego Vehicle Status
         # (1911) is not allowed.  Ctrl Cmd User 9094 -> Sim 9093.
         for name in ("integrated_obstacle_v61_overtake.launch",
-                     "integrated_obstacle_v61_overtake_escape.launch"):
+                     "integrated_obstacle_v61_overtake_escape.launch",
+                     "integrated_obstacle_v61_overtake_escape2.launch",
+                     "integrated_obstacle_v61_overtake_escape3.launch"):
             text = (LAUNCH_DIR / name).read_text(encoding="utf-8")
             root = ET.fromstring(text)
             args = {a.get("name"): a.get("default") for a in root if a.tag == "arg"}
@@ -113,6 +115,19 @@ class GeneratedV61LaunchTest(unittest.TestCase):
         highway.remove(lanes[0])
         highway.set("type", "highway_overtake_node.py")
         self.assertEqual([canonical(e) for e in escape2 if e.tag != ET.Comment],
+                         [canonical(e) for e in self.output if e.tag != ET.Comment])
+
+    def test_escape3_launch_adds_only_its_config(self):
+        escape3 = ET.parse(str(LAUNCH_DIR / "integrated_obstacle_v61_overtake_escape3.launch")).getroot()
+        highway = node(escape3, "highway_lane_strategy")
+        self.assertEqual(highway.get("type"), "highway_overtake_escape3_node.py")
+        loads = highway.findall("rosparam")
+        self.assertEqual([p.get("file") for p in loads], [
+            "$(arg overtake_config_file)",
+            "$(find purepursuit_mgeo)/config/highway_overtake_escape3.yaml"])
+        highway.remove(loads[1])
+        highway.set("type", "highway_overtake_node.py")
+        self.assertEqual([canonical(e) for e in escape3 if e.tag != ET.Comment],
                          [canonical(e) for e in self.output if e.tag != ET.Comment])
 
     def test_highway_node_keeps_the_team_wiring(self):
