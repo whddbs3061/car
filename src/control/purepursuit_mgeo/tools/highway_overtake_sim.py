@@ -52,13 +52,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]
                        / "experimental/curvature_speed_purepursuit/src"))
 
 from curvature_speed_purepursuit import planner as cp  # noqa: E402
-from purepursuit_mgeo import highway_overtake, highway_overtake_escape  # noqa: E402
+from purepursuit_mgeo import (  # noqa: E402
+    highway_overtake, highway_overtake_escape, highway_overtake_escape2,
+)
 from purepursuit_mgeo.highway_overtake import (  # noqa: E402
     HighwayOvertakePlanner, Obstacle, OvertakeConfig, Route, align_with_controller,
 )
 # highway_overtake_node.py runs the stable planner, highway_overtake_escape_node.py
 # the lead-escape variant.
-PLANNERS = {"stable": highway_overtake, "escape": highway_overtake_escape}
+PLANNERS = {"stable": highway_overtake, "escape": highway_overtake_escape,
+            "escape2": highway_overtake_escape2}
 from purepursuit_mgeo.motion import diagonal_progress  # noqa: E402
 
 # Road frame -> map frame, matching the real section (zone start = entry lane
@@ -213,6 +216,29 @@ NPC_PATHS = {
 NPC_END_X = {1: 399.4, 2: 387.4, 3: 555.9}
 
 
+
+def map_lanes():
+    """Lane centrelines like config/highway_lanes.json, for this road (map frame).
+
+    As in MGeo the entry lane merges into L1 over the taper, and L1 and L2
+    end on merge links into the funnel node with L3.
+    """
+    def lane(points):
+        out = []
+        for (xa, ya), (xb, yb) in zip(points, points[1:]):
+            for x in np.arange(xa, xb, 1.0):
+                out.append(road_to_map(x, ya + (yb - ya)*(x - xa)/(xb - xa)))
+        out.append(road_to_map(*points[-1]))
+        return out
+    funnel = (FUNNEL_X, 3*LANE_W)
+    return [
+        (0, lane([(-120.0, 0.0), (ENTRY_TAPER[0], 0.0), (ENTRY_TAPER[1], 0.5*LANE_W)])),
+        (1, lane([(-120.0, LANE_W), (357.9, LANE_W), funnel])),
+        (2, lane([(-120.0, 2*LANE_W), (357.9, 2*LANE_W), funnel])),
+        (3, lane([(-120.0, 3*LANE_W), funnel])),
+        (4, lane([(-120.0, 4*LANE_W), (FUNNEL_X, 4*LANE_W)])),
+    ]
+
 def npc_path_y(lane: int, x: float) -> float:
     path = NPC_PATHS.get(lane)
     if path is None or x <= path[0][0]:
@@ -272,6 +298,9 @@ class Scenario:
     camera_format: str = "real_lane"
     ego_start_x: float = -80.0
     ego_start_v: float = 15.0
+    # Line type the camera reports for the entry divider (a solid+broken
+    # double line in MGeo); None: its real kind.
+    entry_divider_type: Optional[str] = None
     extra_npcs: List[Tuple[float, float, float]] = field(default_factory=list)  # x, y, kmh
     # NPCs follow the vehicle ahead (ego included) with the IDM using MORAI's
     # SafetyDist as standstill gap and TTC as time gap; False: never brake.
@@ -298,6 +327,9 @@ SCENARIOS = {
         "morai_camera_noise", "same traffic, 30% camera dropouts, noisy fit, v2 publisher",
         MORAI_TRAFFIC, camera_dropout=0.30, camera_noise=0.06, camera_format="v2"),
     "empty": Scenario("empty", "no traffic: three changes as early as possible"),
+    "entry_solid": Scenario(
+        "entry_solid", "sample traffic; the camera reads the entry double line as solid",
+        MORAI_TRAFFIC, entry_divider_type="solid"),
 }
 
 # Invented stress cases, not in the sample scenario; NPCs never brake.
@@ -458,6 +490,8 @@ class CameraSim:
             if abs(y7) > 9.0:
                 continue
             kind = line.kind_at(ex + 10.0) or "solid"
+            if line.name == "entry_divider" and self.scenario.entry_divider_type:
+                kind = self.scenario.entry_divider_type
             fits.append((y7, float(np.polyval(coef, 1.0)), line.name, coef, kind,
                          float(xe[keep].max())))
         seen = {f[2] for f in fits}
@@ -634,7 +668,7 @@ def default_config(route_points, module=highway_overtake) -> OvertakeConfig:
 
 def run(scenario: Scenario, seed: int, cfg_overrides: Optional[Dict] = None,
         record: bool = True, controller: str = "mission", align: bool = True,
-        planner: str = "stable") -> Dict:
+        planner: str = "stable", on_step=None) -> Dict:
     rng = random.Random(seed)
     module = PLANNERS[planner]
     cfg = default_config(GLOBAL_MAP, module)
@@ -644,6 +678,8 @@ def run(scenario: Scenario, seed: int, cfg_overrides: Optional[Dict] = None,
     aligned = (module.align_with_controller(cfg, preset["lateral"], preset["accel"],
                                             preset["decel"]) if align else {})
     planner = module.HighwayOvertakePlanner(cfg, GLOBAL_MAP)
+    if hasattr(planner, "set_map_lanes"):
+        planner.set_map_lanes(map_lanes())
     # The launch caps the controller at max(max_speed_kph, highway_max_speed_kph).
     ctrl = ControllerSim(preset, max(cfg.max_speed_mps, cfg.cruise_speed_mps))
     npcs = make_traffic(scenario, rng)
@@ -698,6 +734,8 @@ def run(scenario: Scenario, seed: int, cfg_overrides: Optional[Dict] = None,
         # ---- planner (20 Hz) --------------------------------------------
         if t >= next_plan:
             next_plan = t + 0.05
+            if on_step is not None:
+                on_step(planner, t, ex, ey)       # test hook: perturb the planner
             out = planner.step(t)
             for text in out.events:
                 events.append((round(t, 2), round(ex, 1), text))

@@ -21,7 +21,9 @@ highway_lateral_accel_mps2, overtake_config_file.  The zone flag is
 /highway_lane_strategy/zone_active; without it the team's behaviour applies.
 
 integrated_obstacle_v61_overtake_escape.launch is the same with
-highway_overtake_escape_node.py, the lead-escape planner variant.
+highway_overtake_escape_node.py, the lead-escape planner variant, and
+integrated_obstacle_v61_overtake_escape2.launch with highway_overtake_escape2_node.py
+and its lanes_file (map lane check).
 
 Paths follow this file's workspace, so inside the container the outputs are
 derived from the container's own launch.
@@ -41,6 +43,9 @@ LAUNCH_DIR = WS / "src/bringup/morai_bringup/launch"
 SOURCE = LAUNCH_DIR / "integrated_obstacle_v61.launch"
 OUTPUT = LAUNCH_DIR / "integrated_obstacle_v61_overtake.launch"
 ESCAPE_OUTPUT = LAUNCH_DIR / "integrated_obstacle_v61_overtake_escape.launch"
+ESCAPE2_OUTPUT = LAUNCH_DIR / "integrated_obstacle_v61_overtake_escape2.launch"
+# escape2 checks its lane count against the MGeo lane centrelines.
+ESCAPE2_PARAMS = (("lanes_file", "$(find purepursuit_mgeo)/config/highway_lanes.json"),)
 HIGHWAY_NODE = "highway_lane_strategy"
 CONTROLLER_NODE = "curvature_speed_purepursuit"
 FUSION_NODE = "curvature_signal_controller"
@@ -84,7 +89,8 @@ def _append(node, params):
                              name=name, value=value))
 
 
-def transform(text: str, highway_type: str = "highway_overtake_node.py") -> str:
+def transform(text: str, highway_type: str = "highway_overtake_node.py",
+              extra_params=()) -> str:
     root = ET.fromstring(text, parser=ET.XMLParser(target=ET.TreeBuilder(insert_comments=True)))
     if root.tag != "launch":
         raise ValueError("not a launch file")
@@ -151,6 +157,7 @@ def transform(text: str, highway_type: str = "highway_overtake_node.py") -> str:
                  value=_param(controller, "max_decel_mps2").get("value")),
         _element("param", indent, name="highway_cruise_speed_mps",
                  value="$(eval float(arg('highway_cruise_kph')) / 3.6)"),
+        *[_element("param", indent, name=name, value=value) for name, value in extra_params],
         _element("param", indent, name="highway_max_speed_mps",
                  value="$(eval float(arg('highway_max_speed_kph')) / 3.6)"),
     ]
@@ -177,9 +184,11 @@ def main(argv) -> int:
         return 2
     source = SOURCE.read_text(encoding="utf-8")
     stale = 0
-    for output, highway_type in ((OUTPUT, "highway_overtake_node.py"),
-                                 (ESCAPE_OUTPUT, "highway_overtake_escape_node.py")):
-        text = transform(source, highway_type)
+    for output, highway_type, extra in (
+            (OUTPUT, "highway_overtake_node.py", ()),
+            (ESCAPE_OUTPUT, "highway_overtake_escape_node.py", ()),
+            (ESCAPE2_OUTPUT, "highway_overtake_escape2_node.py", ESCAPE2_PARAMS)):
+        text = transform(source, highway_type, extra)
         if "--check" in argv:
             current = output.is_file() and output.read_text(encoding="utf-8") == text
             stale += not current

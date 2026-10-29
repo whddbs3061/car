@@ -98,3 +98,28 @@ MORAI 실주행 검증은 아직 하지 않았습니다.
 - **Ego Vehicle Status(1911)는 쓰지 않습니다(실격 사유).** 새 launch에는 1911이 없습니다.
 - **기존 브리지로 읽습니다.** Competition Vehicle Status 패킷(`#MoraiInfo$`, 181바이트 또는 229바이트)은 앞 181바이트 배열이 기존 `morai_udp_drive_bridge` 파서와 같습니다(`car/src/path_planning/morai_udp_competition_status.py`로 확인). 그래서 브리지 코드는 그대로 두고 받는 포트만 바꿨습니다.
 - **팀원 launch는 아직 1911:** `team-drive`로 띄우는 팀원 원본 `integrated_obstacle_v61.launch`는 여전히 1911입니다. 대회에서 팀원 launch를 쓴다면 팀원도 바꿔야 합니다.
+
+## 8. escape2 (2026-10-30): 진입 겹선 + 지도로 차로 번호 확인
+
+`drive-escape2` / `monitor-escape2` → `integrated_obstacle_v61_overtake_escape2.launch` → `highway_overtake_escape2_node.py` → `highway_overtake_escape2.py`. 기존 노드와 앞차 회피 노드는 그대로입니다.
+
+앞차 회피 판(`highway_overtake_escape.py`)의 복사본에 두 가지를 더했습니다.
+
+- **진입 차로 경계(겹선):** 진입 차로의 왼쪽 선은 합류 경계(MGeo `solid broken`)이고, 진입 쪽이 점선이라 넘을 수 있습니다.
+  - 그래서 첫 변경은 카메라가 그 선을 실선으로 읽어도 시작합니다.
+  - 진입 차로에서는 왼쪽 실선을 보고 "최종 차로"로 판단하지 않습니다.
+- **지도로 차로 번호 확인:** `config/highway_lanes.json`(MGeo 링크로 만든 진입 차로·L1~L4 중심선, `tools/make_highway_lanes.py`)에서 차에 가장 가까운 차로를 찾습니다.
+  - 가장 가까운 차로와 1.2 m 안에 있고, 다음 차로와 1.5 m 넘게 차이 나면 확실한 것으로 봅니다.
+  - 확실한 결과가 플래너가 세는 차로 번호와 1초 넘게 다르면 지도 쪽으로 고칩니다.
+  - 차로 변경 중이거나 차로가 합쳐지는 곳(진입 테이퍼, 구간 끝 깔때기)에서는 고치지 않습니다.
+  - 최종 차로로 판단했는데 지도상 아래 차로면 차로 변경을 다시 시작합니다.
+  - 상태 토픽의 `map_lane`(index, offset, margin, clear)과 이벤트 `lane count corrected by the map`로 확인할 수 있습니다.
+
+오프라인 결과(`--planner escape2`):
+
+| 트래픽 | 결과 |
+|---|---|
+| 대회 트래픽 30판 × 제어기 두 가지 | 앞차 회피 판과 같음(문제 0) |
+| 진입 겹선을 실선으로 읽는 카메라(`entry_solid`) | 앞차 회피 판 20판 모두 실패 → escape2 20판 모두 통과 |
+
+일부러 차로 번호를 하나 틀리게 만든 시험에서는 13~20 m 안에 바로잡았습니다.

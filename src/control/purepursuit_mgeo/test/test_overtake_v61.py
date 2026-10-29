@@ -104,6 +104,17 @@ class GeneratedV61LaunchTest(unittest.TestCase):
         self.assertEqual([canonical(e) for e in escape if e.tag != ET.Comment],
                          [canonical(e) for e in self.output if e.tag != ET.Comment])
 
+    def test_escape2_launch_adds_only_the_lanes_file(self):
+        escape2 = ET.parse(str(LAUNCH_DIR / "integrated_obstacle_v61_overtake_escape2.launch")).getroot()
+        highway = node(escape2, "highway_lane_strategy")
+        self.assertEqual(highway.get("type"), "highway_overtake_escape2_node.py")
+        lanes = [p for p in highway.findall("param") if p.get("name") == "lanes_file"]
+        self.assertEqual(len(lanes), 1)
+        highway.remove(lanes[0])
+        highway.set("type", "highway_overtake_node.py")
+        self.assertEqual([canonical(e) for e in escape2 if e.tag != ET.Comment],
+                         [canonical(e) for e in self.output if e.tag != ET.Comment])
+
     def test_highway_node_keeps_the_team_wiring(self):
         a, b = node(self.source, "highway_lane_strategy"), node(self.output, "highway_lane_strategy")
         self.assertEqual(b.get("type"), "highway_overtake_node.py")
