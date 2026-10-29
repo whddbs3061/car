@@ -128,7 +128,7 @@ def _tracking_available():
 
 
 def main(ip=IP, port=PORT, base_model_path=BASE_MODEL_PATH,
-         custom_model_path=CUSTOM_MODEL_PATH, confidence=0.4,
+         custom_model_path=CUSTOM_MODEL_PATH, confidence=0.6,
          car_detected_topic=CAR_DETECTED_TOPIC,
          person_detected_topic=PERSON_DETECTED_TOPIC,
          traffic_light_topic="/detection/traffic_light",

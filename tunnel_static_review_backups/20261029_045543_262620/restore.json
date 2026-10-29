@@ -1,0 +1,9 @@
+{
+  "workspace": "/root/morai_integration_test/AutoVehicle/morai_ws",
+  "files": {
+    "src/control/purepursuit_mgeo/scripts/v61_obstacle_avoidance_node.py": {
+      "existed": true,
+      "new_sha256": "6702ba4239a150e3ed62031aa2cf035d8fb51f0ffb7d0815bfb1b1c08524ce07"
+    }
+  }
+}

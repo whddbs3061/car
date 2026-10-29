@@ -8,9 +8,9 @@ from types import SimpleNamespace
 # CAM4's original signal ROI ended at 65% of the image height.  Keep vertical
 # heads possible; cap area to reject gantry-sized false signal detections.
 SIGNAL_ROI_MAX_CENTER_Y = 0.65
-SIGNAL_MIN_ASPECT_RATIO = 0.2
+SIGNAL_MIN_ASPECT_RATIO = 2.0
 SIGNAL_MAX_ASPECT_RATIO = 8.0
-SIGNAL_MAX_AREA_FRACTION = 0.04
+SIGNAL_MAX_AREA_FRACTION = 0.01
 
 
 def traffic_bbox_plausible(x, y, width, height, image_height):
@@ -120,10 +120,10 @@ class TrackedSignalVotes:
             return class_name
         key = int(track_id)
         name = str(class_name).lower()
-        if any(word in name for word in ("red", "yellow", "amber", "unknown", "conflict")):
+        if any(word in name for word in ("unknown", "conflict")):
             self.history.pop(key, None)
             return class_name
-        if any(word in name for word in ("green", "left", "right", "arrow")):
+        if any(word in name for word in ("red", "yellow", "amber", "green", "left", "right", "arrow")):
             samples = self.history.setdefault(key, deque(maxlen=self.window))
             samples.append(class_name)
             return class_name if Counter(samples)[class_name] >= self.green_votes else "Unknown"

@@ -12,7 +12,7 @@ from morai_msgs.msg import CtrlCmd
 from purepursuit_mgeo.path import load_mgeo_path
 
 
-def choose(now, nominal, decision, driver, timeout=0.3):
+def choose(now, nominal, decision, driver, timeout=0.3, highway=None, highway_required=False):
     def fresh(sample):
         return sample is not None and 0 <= now-sample[1] <= timeout
     if not fresh(decision):
@@ -21,6 +21,10 @@ def choose(now, nominal, decision, driver, timeout=0.3):
         if not fresh(driver) or not driver[0].get('driver_input_fresh') or not driver[0].get('active'):
             return None, 'roundabout_driver_stale'
         return driver[0], 'roundabout_v61'
+    if highway_required:
+        if not fresh(highway):
+            return None, 'highway_command_stale'
+        return highway[0], 'highway'
     if not fresh(nominal):
         return None, 'nominal_stale'
     return nominal[0], 'normal_highway'
@@ -30,7 +34,8 @@ class Integration:
     def __init__(self):
         self.lock = threading.RLock()
         self.points = load_mgeo_path(rospy.get_param('~path_file'))
-        self.odom = self.nominal = self.decision = self.driver = None
+        self.odom = self.nominal = self.decision = self.driver = self.highway_command = None
+        self.separate_highway = rospy.get_param("~separate_highway_command", False)
         self.s = [0.0]
         for a,b in zip(self.points,self.points[1:]):
             self.s.append(self.s[-1]+math.hypot(a.x-b.x,a.y-b.y))
@@ -45,6 +50,8 @@ class Integration:
         self.diag=rospy.Publisher('~status',String,queue_size=1)
         rospy.Subscriber('/localization/odometry',Odometry,self.pose,queue_size=1)
         rospy.Subscriber('/integration/nominal_cmd',CtrlCmd,self.command,queue_size=1)
+        if self.separate_highway:
+            rospy.Subscriber('/integration/highway_cmd',CtrlCmd,lambda m:self.command(m,'highway_command'),queue_size=1)
         rospy.Subscriber('/roundabout_merge_gate/status',String,lambda m:self.status(m,'decision'),queue_size=1)
         rospy.Subscriber('/roundabout_test_driver/status',String,lambda m:self.status(m,'driver'),queue_size=1)
         self.timer=rospy.Timer(rospy.Duration(.05),self.tick)
@@ -53,9 +60,9 @@ class Integration:
         age=rospy.get_time()-m.header.stamp.to_sec()
         if not 0<=age<=.5:return
         with self.lock:self.odom=(m,time.monotonic())
-    def command(self,m):
+    def command(self,m,key="nominal"):
         if m.longlCmdType!=1 or not all(math.isfinite(v) for v in (m.accel,m.brake,m.steering)):return
-        with self.lock:self.nominal=(m,time.monotonic())
+        with self.lock:setattr(self,key,(m,time.monotonic()))
     def status(self,m,key):
         try:
             d=json.loads(m.data)
@@ -77,7 +84,9 @@ class Integration:
                 i=min(range(len(self.points)),key=lambda i:(self.points[i].x-p.x)**2+(self.points[i].y-p.y)**2)
                 highway=1118.742<=self.s[i]<=1741.721 and math.hypot(self.points[i].x-p.x,self.points[i].y-p.y)<=11
             self.request_pub.publish(Bool(data=highway))
-            selected,reason=choose(now,self.nominal,self.decision,self.driver)
+            selected,reason=choose(now,self.nominal,self.decision,self.driver,
+                                   highway=self.highway_command,
+                                   highway_required=self.separate_highway and highway)
             cmd=CtrlCmd();cmd.longlCmdType=1;cmd.brake=1
             if pose_ok and selected is not None:
                 if isinstance(selected,dict):

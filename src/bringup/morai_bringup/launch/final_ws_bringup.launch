@@ -12,6 +12,9 @@
   <arg name="control_remote_port" default="9093" />
   <arg name="control_source_port" default="9094" />
   <arg name="enable_control" default="false" />
+  <arg name="publish_nominal_command" default="$(arg enable_control)" />
+  <arg name="nominal_command_topic" default="/control/ctrl_cmd" />
+  <arg name="enable_highway_route_acceptance" default="false" />
   <arg name="enable_lane_fallback" default="true" />
   <!-- Optional normal-mode blend of fresh lane geometry into curvature PP. -->
   <arg name="enable_lane_correction" default="false" />
@@ -83,6 +86,9 @@
     <arg name="control_remote_port" value="$(arg control_remote_port)" />
     <arg name="control_source_port" value="$(arg control_source_port)" />
     <arg name="enable_control" value="$(arg enable_control)" />
+    <arg name="publish_nominal_command" value="$(arg publish_nominal_command)" />
+    <arg name="nominal_command_topic" value="$(arg nominal_command_topic)" />
+    <arg name="enable_highway_route_acceptance" value="$(arg enable_highway_route_acceptance)" />
     <arg name="use_roi_sensor_stack" value="true" />
     <arg name="enable_sensor_quality" value="$(arg enable_lane_fallback)" />
     <arg name="enable_lane_fallback" value="$(arg enable_lane_fallback)" />

@@ -27,6 +27,7 @@ from std_msgs.msg import String
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Imu
 from ekf_local_enu.math_utils import quaternion_to_yaw, wrap_angle, yaw_to_quaternion
+from ekf_local_enu.distance_scale import DistanceScale
 
 def stamp_seconds(stamp: rospy.Time) -> float:
     value = stamp.to_sec()
@@ -75,6 +76,7 @@ class LocalEnuEkf:
         rospy.init_node("ekf_local_enu", anonymous=False)
 
         self.lock = threading.RLock()
+        self.distance_scale = DistanceScale(rospy.get_param("~distance_scale_enabled", True))
         self.trust_imu = bool(rospy.get_param("~trust_imu", True))
         self.use_vehicle_speed_aiding = bool(rospy.get_param("~use_vehicle_speed_aiding", True))
         self.ego_diagnostic_sample = None
@@ -231,6 +233,8 @@ class LocalEnuEkf:
             return  # accumulate short intervals; do not rewind integration time
         self.last_imu_stamp = stamp
         if dt > 0.25:
+            self.distance_scale.pause("imu_gap_frozen")
+            self.distance_scale.motion.clear()
             rospy.logwarn_throttle(2.0, "IMU gap %.6f s: unknown motion is not reconstructed", dt)
             return
         self.latest_gyro_z = yaw_rate
@@ -262,6 +266,7 @@ class LocalEnuEkf:
                 or max(abs(x), abs(y)) > self.max_gps_local_coordinate
                 or not -0.05 <= rospy.get_time()-stamp <= self.gps_timeout
                 or not self.gps_update_allowed()):
+            self.distance_scale.pause("invalid_gps_frozen")
             return
 
         gps_vx = float(msg.twist.twist.linear.x)
@@ -309,6 +314,7 @@ class LocalEnuEkf:
         gps_gap = (self.last_accepted_gps_stamp is not None
                    and stamp-self.last_accepted_gps_stamp > self.gps_timeout)
         if gps_gap or self.gps_recovering:
+            self.distance_scale.pause("gps_recovery_frozen")
             self.gps_recovering = True
             previous = self.gps_recovery_sample
             consistent = (previous is not None and 0 < stamp-previous[2] <= self.gps_timeout
@@ -376,6 +382,8 @@ class LocalEnuEkf:
             self.gps_recovering = False
             self.gps_recovery_sample = None
             self.gps_recovery_count = 0
+        if not self.gps_recovering and not gps_gap:
+            self.distance_scale.observe_gps(stamp, raw_x, raw_y)
         self.last_accepted_gps_position = (raw_x, raw_y)
         self.last_accepted_gps_stamp = stamp
         shift_x = self.state[0, 0]-before_state[0, 0]
@@ -498,7 +506,8 @@ class LocalEnuEkf:
             accel_bias_mps2=float(self.state[5, 0]), gps_age_s=gps_age,
             ekf_x_m=float(self.state[0, 0]), ekf_y_m=float(self.state[1, 0]),
             time_aligned_position_error_m=position_error,
-            speed_error_mps=None if speed is None else float(self.state[3, 0])-speed), allow_nan=False)))
+            speed_error_mps=None if speed is None else float(self.state[3, 0])-speed,
+            **self.distance_scale.status()), allow_nan=False)))
 
     def gps_motion_gate_allowed(self, x: float, y: float, stamp: float) -> bool:
         if not self.enable_gps_jump_gate:
@@ -524,18 +533,23 @@ class LocalEnuEkf:
         yaw_rate = gyro_z-gyro_bias
         acceleration = accel_x-accel_bias
         mid_yaw = yaw+0.5*yaw_rate*dt
-        distance = velocity*dt+0.5*acceleration*dt*dt
+        raw_distance = velocity*dt+0.5*acceleration*dt*dt
         c, sn = math.cos(mid_yaw), math.sin(mid_yaw)
+        self.distance_scale.add_motion(
+            self.last_imu_stamp, raw_distance*c, raw_distance*sn, dt,
+            valid=self.use_vehicle_speed_aiding and self.fresh_vehicle_speed() is not None)
+        factor = self.distance_scale.factor
+        distance = raw_distance*factor
         self.state[0, 0] = x+distance*c
         self.state[1, 0] = y+distance*sn
         self.state[2, 0] = wrap_angle(yaw+yaw_rate*dt)
         self.state[3, 0] = velocity+acceleration*dt
         f = np.eye(6)
-        f[0, 2] = -distance*sn; f[0, 3] = dt*c
-        f[1, 2] = distance*c; f[1, 3] = dt*sn
+        f[0, 2] = -distance*sn; f[0, 3] = factor*dt*c
+        f[1, 2] = distance*c; f[1, 3] = factor*dt*sn
         if not self.trust_imu:
             f[0, 4] = 0.5*dt*distance*sn; f[1, 4] = -0.5*dt*distance*c
-            f[0, 5] = -0.5*dt*dt*c; f[1, 5] = -0.5*dt*dt*sn
+            f[0, 5] = -0.5*factor*dt*dt*c; f[1, 5] = -0.5*factor*dt*dt*sn
             f[2, 4] = -dt; f[3, 5] = -dt
         q = np.diag([.02*dt, .02*dt, self.gyro_noise_std**2*dt*dt,
                      self.accel_noise_std**2*dt*dt,

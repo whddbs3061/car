@@ -1,0 +1,122 @@
+--- before/src/bringup/morai_bringup/launch/integrated_obstacle_v61.launch
++++ after/src/bringup/morai_bringup/launch/integrated_obstacle_v61.launch
+@@ -2,6 +2,7 @@
+   <arg name="workspace_path" default="$(env HOME)/morai_ws" />
+   <arg name="avoidance_planning_times_s" default="[2.0, 3.0, 4.0]" />
+   <arg name="avoidance_planning_rate_hz" default="5.0" />
++  <arg name="avoidance_regions_file" default="$(find purepursuit_mgeo)/config/avoidance_regions.yaml" />
+   <arg name="path_file" default="$(arg workspace_path)/data/routes/2026_molit_comp_global_path.txt" />
+   <arg name="signal_config_file" default="$(arg workspace_path)/config/curvature_signal.yaml" />
+   <arg name="signal_mgeo_path" default="$(find camera_perception)/lane/mgeo/R_KR_PR_K-city_2025" />
+@@ -329,6 +330,7 @@
+     <param name="dynamic_topic" value="/integration/avoidance/dynamic_obstacles" />
+   </node>
+   <node pkg="purepursuit_mgeo" type="v61_obstacle_avoidance_node.py" name="frenet_fsm_controller" output="screen" required="true">
++    <rosparam command="load" file="$(arg avoidance_regions_file)" />
+     <param name="path_file" value="$(arg path_file)" />
+     <param name="enable_control" value="false" />
+     <param name="odometry_topic" value="/localization/odometry" />
+--- before/src/control/purepursuit_mgeo/scripts/v61_obstacle_avoidance_node.py
++++ after/src/control/purepursuit_mgeo/scripts/v61_obstacle_avoidance_node.py
+@@ -5,6 +5,7 @@
+ import math
+ 
+ import rospy
++from purepursuit_mgeo.route_avoidance_gate import RouteAvoidanceGate
+ from purepursuit_mgeo.plan_transport import trajectory_payload
+ from nav_msgs.msg import Path
+ from std_msgs.msg import Bool, String
+@@ -39,6 +40,18 @@
+         super().__init__()
+         if self.enable_control:
+             raise ValueError("This adapter must run with enable_control=false")
++        self.region_gate_enabled = bool(rospy.get_param("~avoidance_region_gate_enabled", False))
++        self.region_gate = None
++        self._region_status = {"allowed": False, "planning_enabled": False, "reason": "startup"}
++        if self.region_gate_enabled:
++            self.region_gate = RouteAvoidanceGate(
++                self.global_points, rospy.get_param("~avoidance_regions"),
++                expected_fingerprint=rospy.get_param("~avoidance_route_fingerprint", ""),
++                max_match_distance_m=float(rospy.get_param("~avoidance_max_route_distance_m", 12.)),
++                search_ahead_m=float(rospy.get_param("~avoidance_progress_search_ahead_m", 60.)),
++                search_behind_m=float(rospy.get_param("~avoidance_progress_search_behind_m", 20.)),
++                gps_blackout_override=bool(rospy.get_param("~avoidance_gps_blackout_override", True)))
++            rospy.loginfo("Integrated avoidance regions: %s", json.dumps(self.region_gate.regions))
+         self.output_path = rospy.Publisher("/integration/avoidance/base_path", Path, queue_size=1)
+         self.output_stop = rospy.Publisher("/integration/avoidance/base_stop", Bool, queue_size=1)
+         self.output_active = rospy.Publisher("/integration/avoidance/active", Bool, queue_size=1)
+@@ -95,12 +108,12 @@
+         # rospy publishers serialize synchronously even with queue_size=1.
+         self._pending_output = (path, stop, active, reason, dict(self._input_health),
+                                 self.state, self.tunnel_mode,
+-                                len(self.planner.last_blocker_diagnostics))
++                                len(self.planner.last_blocker_diagnostics), dict(self._region_status))
+ 
+     def _flush_output(self, pending):
+         if pending is None:
+             return
+-        path, stop, active, reason, health, state, tunnel, blockers = pending
++        path, stop, active, reason, health, state, tunnel, blockers, region = pending
+         # A kept, recently revalidated candidate may have an old creation stamp.
+         # Preserve its geometry/seq but stamp this execution heartbeat afresh.
+         if path is not None:
+@@ -112,7 +125,8 @@
+             self.output_path.publish(path)
+             payload = json.loads(trajectory_payload(path, stop, self.normal_speed, reason))
+             payload.update(active=bool(active), state=state, tunnel_mode=bool(tunnel),
+-                           version="TUNNEL_MOTION_V3")
++                           version="TUNNEL_MOTION_V3", avoidance_gate=region,
++                           avoidance_enabled=region["planning_enabled"])
+             self.output_trajectory.publish(String(data=json.dumps(payload, separators=(",", ":"), allow_nan=False)))
+         self.output_stop.publish(Bool(data=bool(stop)))
+         self.output_active.publish(Bool(data=bool(active)))
+@@ -121,6 +135,7 @@
+             "version": "TUNNEL_MOTION_V3",
+             "state": state, "source": reason, "stop": bool(stop),
+             "tunnel_mode": tunnel, "blocker_count": blockers,
++            "avoidance_enabled": region["planning_enabled"], "avoidance_gate": region,
+             "inputs": health,
+         }, separators=(",", ":"))))
+ 
+@@ -163,15 +178,40 @@
+         base_ok = all(checks[k] for k in checks if k.startswith('base_path_'))
+         stopped = bool(failed)
+         owner = mission_owner(now, self.highway, self.roundabout)
++        self._update_tunnel_mode(now)
++        pose_ok = all(ok for key, ok in checks.items() if key.startswith("odometry_"))
++        if self.region_gate_enabled:
++            if pose_ok:
++                position = odom.pose.pose.position
++                region = self.region_gate.update(position.x, position.y, self.tunnel_mode)
++            else:
++                region = {"allowed": False, "reason": "odometry_unavailable",
++                          "gps_blackout": bool(self.tunnel_mode)}
++        else:
++            region = {"allowed": True, "reason": "region_gate_disabled"}
++        # The gate controls new entry, never cancels an ongoing detour/return.
++        # Existing input stops and other mission ownership keep their priority.
++        continuing = self.state in (AVOIDANCE, RETURN) and not self.was_suspended
++        region.update(configured=self.region_gate_enabled, continuing=continuing,
++                      entry_allowed=bool(region["allowed"] and not stopped and owner is None),
++                      planning_enabled=bool((region["allowed"] or continuing)
++                                            and not stopped and owner is None))
++        self._region_status = region
+         if stopped or owner is not None:
+             if not self.was_suspended:
+                 self._reset_maneuver()
+             self.was_suspended = True
+-            self._update_tunnel_mode(now)
+             if stopped:
+                 rospy.logwarn_throttle(1.0, "V61_INPUT_FIX1 stop inputs: %s", json.dumps(self._input_health))
+             self._output(self.base if base_ok else None, stopped, False,
+                          "v61_input_stop" if stopped else owner)
++            return
++        if not region["allowed"] and not continuing:
++            if not self.was_suspended:
++                self._reset_maneuver()
++            self.was_suspended = True
++            self._output(self.base if base_ok else None, False, False,
++                         "v61_region_gate_" + region["reason"])
+             return
+         if self.was_suspended:
+             self._reset_maneuver()

@@ -1,0 +1,37 @@
+{
+  "target_workspace": "/root/morai_integration_test/AutoVehicle/morai_ws",
+  "launch": "morai_bringup/integrated_obstacle_v61.launch",
+  "base_archive": "morai_integrated_actual_source.tar.gz",
+  "base_archive_sha256": "915e4c741c54a005b053c2d8496cb089ccd9332835a4248e33d2501b8403332e",
+  "route_point_count": 4430,
+  "route_fingerprint": "478510b0d72f42d3aad8454da7eb27f9288b6c4d95122aa5eb20e2e6bf1220df",
+  "tests_passed": 27,
+  "ros_build_run": false,
+  "morai_driving_run": false,
+  "files": [
+    {
+      "path": "src/bringup/morai_bringup/launch/integrated_obstacle_v61.launch",
+      "change": "modified",
+      "sha256": "c4e6516ebf39a8dff187506745e7f20cb1cbc40c7a9af9c7b75dc77b3c8a825a",
+      "base_sha256": "60e3715a4f5525462497f61f158695fe0f63b858178ecf7d51474a344d644e33"
+    },
+    {
+      "path": "src/control/purepursuit_mgeo/config/avoidance_regions.yaml",
+      "change": "added",
+      "sha256": "40a934501fb41f3788efd9332cf585b26ed765821cab37512b88adf24ad924d0",
+      "base_sha256": null
+    },
+    {
+      "path": "src/control/purepursuit_mgeo/scripts/v61_obstacle_avoidance_node.py",
+      "change": "modified",
+      "sha256": "8952ed2602e1a5ce060e5849e7a3e84dfc85b53d82e22d72d97a0e34f0f17085",
+      "base_sha256": "4868ff5f6337fbae6bde71a013f8b60efb524468dc8dd3ed697687dadcb6ed2d"
+    },
+    {
+      "path": "src/control/purepursuit_mgeo/src/purepursuit_mgeo/route_avoidance_gate.py",
+      "change": "added",
+      "sha256": "7d9e984244ef484e870296e65d27bb0edce4c5d7296956032a7bd9070b77e074",
+      "base_sha256": null
+    }
+  ]
+}

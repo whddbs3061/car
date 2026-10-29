@@ -1,0 +1,413 @@
+--- before/src/bringup/morai_bringup/launch/integrated_obstacle_v61.launch
++++ after/src/bringup/morai_bringup/launch/integrated_obstacle_v61.launch
+@@ -180,6 +180,7 @@
+     <arg name="enable_intersection_detection" value="false" />
+   </include>
+   <node pkg="turn_signal_controller" type="maneuver_fusion_node.py" name="curvature_signal_controller" output="screen">
++    <rosparam command="load" file="$(arg avoidance_regions_file)" />
+     <rosparam file="$(arg signal_config_file)" command="load" />
+     <rosparam param="maneuvers">[]</rosparam>
+     <param name="highway_route_enabled" value="true" />
+--- before/src/control/purepursuit_mgeo/config/avoidance_regions.yaml
++++ after/src/control/purepursuit_mgeo/config/avoidance_regions.yaml
+@@ -16,3 +16,16 @@
+   - name: dynamic_obstacle
+     start_xyz: [-59.36, -63.85, 29.86]
+     end_xyz: [-60.07, 16.88, 29.87]
++
++# Stop/wait mission for the named dynamic region.
++dynamic_zone_enabled: true
++dynamic_zone_speed_kph: 20.0
++dynamic_zone_approach_m: 40.0
++dynamic_zone_lookahead_m: 30.0
++dynamic_zone_vehicle_width_m: 1.892
++dynamic_zone_margin_m: 0.3
++dynamic_zone_clearance_extra_m: 0.3
++dynamic_zone_clear_confirm_s: 0.6
++dynamic_zone_input_timeout_s: 0.6
++dynamic_zone_prediction_s: 2.0
++dynamic_zone_stop_wait: true
+--- before/src/control/purepursuit_mgeo/scripts/v61_obstacle_avoidance_node.py
++++ after/src/control/purepursuit_mgeo/scripts/v61_obstacle_avoidance_node.py
+@@ -41,6 +41,7 @@
+         if self.enable_control:
+             raise ValueError("This adapter must run with enable_control=false")
+         self.region_gate_enabled = bool(rospy.get_param("~avoidance_region_gate_enabled", False))
++        self.dynamic_stop_wait = bool(rospy.get_param("~dynamic_zone_stop_wait", False))
+         self.region_gate = None
+         self._region_status = {"allowed": False, "planning_enabled": False, "reason": "startup"}
+         if self.region_gate_enabled:
+@@ -206,6 +207,18 @@
+             self._output(self.base if base_ok else None, stopped, False,
+                          "v61_input_stop" if stopped else owner)
+             return
++        if (getattr(self, "dynamic_stop_wait", False) and "dynamic_obstacle" in region.get("regions", [])
++                and not continuing):
++            # This mission waits on the base route; final command authority
++            # applies speed/stop limits from the same map-tracker observations.
++            self._region_status.update(entry_allowed=False, planning_enabled=False,
++                                       dynamic_stop_wait=True)
++            if not self.was_suspended:
++                self._reset_maneuver()
++            self.was_suspended = True
++            self._output(self.base if base_ok else None, False, False,
++                         "dynamic_zone_reference_wait_mode")
++            return
+         if not region["allowed"] and not continuing:
+             if not self.was_suspended:
+                 self._reset_maneuver()
+--- before/src/control/purepursuit_mgeo/src/purepursuit_mgeo/dynamic_zone_guard.py
++++ after/src/control/purepursuit_mgeo/src/purepursuit_mgeo/dynamic_zone_guard.py
+@@ -0,0 +1,247 @@
++"""20 km/h stop/wait mission on a calibrated route interval; ROS independent.
++
++All map-tracker obstacles intersecting the swept path are safety blockers in
++this interval, including a previously-moving actor that is currently stopped.
++Missing IDs are never treated as observed clearance.
++"""
++import bisect
++import math
++from purepursuit_mgeo.route_avoidance_gate import RouteAvoidanceGate
++
++
++def number(x):
++    return isinstance(x,(int,float)) and not isinstance(x,bool) and math.isfinite(x)
++
++
++def point_segment(p,a,b):
++    dx,dy=b[0]-a[0],b[1]-a[1]
++    l2=dx*dx+dy*dy
++    t=max(0.,min(1.,((p[0]-a[0])*dx+(p[1]-a[1])*dy)/l2)) if l2>1e-12 else 0.
++    return math.hypot(p[0]-a[0]-t*dx,p[1]-a[1]-t*dy)
++
++
++def segment_distance(a,b,c,d):
++    def cross(u,v,w):return (v[0]-u[0])*(w[1]-u[1])-(v[1]-u[1])*(w[0]-u[0])
++    if (cross(a,b,c)*cross(a,b,d)<=0 and cross(c,d,a)*cross(c,d,b)<=0
++            and max(min(a[0],b[0]),min(c[0],d[0]))<=min(max(a[0],b[0]),max(c[0],d[0]))
++            and max(min(a[1],b[1]),min(c[1],d[1]))<=min(max(a[1],b[1]),max(c[1],d[1]))):
++        return 0.
++    return min(point_segment(a,c,d),point_segment(b,c,d),point_segment(c,a,b),point_segment(d,a,b))
++
++
++def segment_box_distance(a,b,o):
++    x,y=o['center_x_map'],o['center_y_map']
++    if not o['yaw_valid']:
++        return max(0.,point_segment((x,y),a,b)-math.hypot(o['length'],o['width'])/2)
++    c,s=math.cos(o['yaw']),math.sin(o['yaw'])
++    def local(p):
++        dx,dy=p[0]-x,p[1]-y
++        return (c*dx+s*dy,-s*dx+c*dy)
++    a,b=local(a),local(b)
++    l,w=o['length']/2,o['width']/2
++    if any(abs(p[0])<=l and abs(p[1])<=w for p in (a,b)):return 0.
++    corners=[(-l,-w),(-l,w),(l,w),(l,-w)]
++    return min(segment_distance(a,b,corners[i],corners[(i+1)%4]) for i in range(4))
++
++
++def convex_hull(points):
++    points=sorted(set(points))
++    def cross(a,b,c):return (b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0])
++    def half(sequence):
++        h=[]
++        for p in sequence:
++            while len(h)>=2 and cross(h[-2],h[-1],p)<=0:h.pop()
++            h.append(p)
++        return h
++    return half(points)[:-1]+half(reversed(points))[:-1]
++
++
++def segment_polygon_distance(a,b,polygon):
++    def inside(p):
++        signs=[(polygon[(i+1)%len(polygon)][0]-q[0])*(p[1]-q[1])-
++               (polygon[(i+1)%len(polygon)][1]-q[1])*(p[0]-q[0]) for i,q in enumerate(polygon)]
++        return all(v>=-1e-9 for v in signs) or all(v<=1e-9 for v in signs)
++    if inside(a) or inside(b):return 0.
++    return min(segment_distance(a,b,q,polygon[(i+1)%len(polygon)]) for i,q in enumerate(polygon))
++
++
++def path_prefix(points,x,y,length):
++    """Clip a fresh executed path around the closest segment, then forward."""
++    if not points or len(points)<2:return []
++    i=min(range(len(points)-1),key=lambda i:point_segment((x,y),points[i],points[i+1]))
++    out=[];remaining=length
++    for j in range(max(0,i-1),len(points)-1):
++        a,b=points[j],points[j+1]
++        step=math.hypot(b[0]-a[0],b[1]-a[1])
++        if step<=1e-9:continue
++        if step>remaining:
++            ratio=remaining/step
++            b=(a[0]+ratio*(b[0]-a[0]),a[1]+ratio*(b[1]-a[1]))
++        out.append((a,b));remaining-=step
++        if remaining<=0:break
++    return out
++
++
++class DynamicZoneGuard:
++    def __init__(self,points,regions,expected_fingerprint='',speed_kph=20.,
++                 approach_m=40.,lookahead_m=30.,vehicle_width_m=1.892,
++                 margin_m=.3,clearance_extra_m=.3,clear_confirm_s=.6,
++                 timeout_s=.6,prediction_s=2.,ego_front_m=3.845):
++        chosen=[r for r in regions if r['name']=='dynamic_obstacle']
++        if len(chosen)!=1:raise ValueError('exactly one dynamic_obstacle region required')
++        values=(speed_kph,approach_m,lookahead_m,vehicle_width_m,margin_m,
++                clearance_extra_m,clear_confirm_s,timeout_s,prediction_s,ego_front_m)
++        if not all(number(v) and v>0 for v in values):raise ValueError('invalid dynamic mission parameters')
++        self.gate=RouteAvoidanceGate(points,chosen,expected_fingerprint,gps_blackout_override=False)
++        self.start=self.gate.regions[0]['start_s_m'];self.end=self.gate.regions[0]['end_s_m']
++        self.points=[(p.x,p.y) for p in points]
++        self.speed_mps=speed_kph/3.6;self.approach=approach_m
++        self.lookahead=lookahead_m;self.front=ego_front_m
++        self.half_width=vehicle_width_m/2+margin_m
++        self.clear_extra=clearance_extra_m;self.confirm=clear_confirm_s
++        self.timeout=timeout_s;self.prediction=prediction_s
++        self.held={};self.last_stamp=None;self.valid=False;self.last_received=None
++        self.input_error="not_received"
++        self.latest={};self.last_active=False;self.last_now=None
++
++    def engaged(self):return self.last_active or bool(self.held)
++
++    def _segments(self,progress,live_path,pose):
++        s=self.gate.s;first=max(0,bisect.bisect_left(s,progress-1.)-1)
++        last=min(len(s)-1,bisect.bisect_right(s,progress+self.lookahead+self.front))
++        segments=[(self.points[i],self.points[i+1]) for i in range(first,last)]
++        if live_path:
++            segments+=path_prefix(live_path,pose[0],pose[1],self.lookahead+self.front)
++        return segments
++
++    def _near(self,o,segments,extra=0.):
++        # Exact continuous translation of an oriented box over prediction_s,
++        # rather than testing a few timestamps and missing a fast crossing.
++        vx,vy=o['velocity_x_map'],o['velocity_y_map']
++        if o['motion_state']=='STATIC':vx=vy=0.
++        x,y=o['center_x_map'],o['center_y_map']
++        end=(x+vx*self.prediction,y+vy*self.prediction)
++        margin=self.half_width+extra
++        if not o['yaw_valid']:
++            radius=math.hypot(o['length'],o['width'])/2+margin
++            return any(segment_distance(a,b,(x,y),end)<=radius for a,b in segments)
++        c,s=math.cos(o['yaw']),math.sin(o['yaw'])
++        l,w=o['length']/2,o['width']/2
++        polygon=convex_hull([(cx+c*dx-s*dy,cy+s*dx+c*dy)
++                             for cx,cy in ((x,y),end) for dx,dy in ((-l,-w),(-l,w),(l,-w),(l,w))])
++        xmin=min(p[0] for p in polygon)-margin;xmax=max(p[0] for p in polygon)+margin
++        ymin=min(p[1] for p in polygon)-margin;ymax=max(p[1] for p in polygon)+margin
++        for a,b in segments:
++            if (max(a[0],b[0])<xmin or min(a[0],b[0])>xmax
++                    or max(a[1],b[1])<ymin or min(a[1],b[1])>ymax):continue
++            if segment_polygon_distance(a,b,polygon)<=margin:return True
++        return False
++
++    def _ingest(self,sample,now,ros_now):
++        if sample is None:return False
++        payload,received=sample
++        try:
++            stamp=payload['timestamp'];raw=payload['obstacles']
++            if (not number(stamp) or not -.05<=ros_now-stamp<=self.timeout
++                    or not 0<=now-received<=self.timeout or not isinstance(raw,list)):
++                raise ValueError('stale or invalid input')
++            if self.last_stamp is not None and stamp<=self.last_stamp:return False
++            parsed={}
++            for raw_o in raw:
++                o=dict(raw_o);key=o['id']
++                if type(key) is not int or key<0 or key in parsed:raise ValueError('ambiguous ID')
++                for field in ('center_x_map','center_y_map','length','width','velocity_x_map','velocity_y_map','yaw'):
++                    if not number(o.get(field)):raise ValueError('invalid geometry')
++                if o['length']<=0 or o['width']<=0:raise ValueError('empty footprint')
++                o['yaw_valid']=o.get('yaw_valid') is True
++                o['motion_state']=str(o.get('motion_state','UNKNOWN')).upper()
++                parsed[key]=o
++            if 'obstacle_count' in payload and payload['obstacle_count']!=len(raw):raise ValueError('count mismatch')
++            self.latest=parsed;self.valid=True;self.last_stamp=stamp;self.last_received=received
++            self.input_error=""
++            return True
++        except (ValueError,KeyError,TypeError) as error:
++            self.valid=False
++            self.input_error=str(error)
++            return False
++
++    def step(self,now,ros_now,pose,speed,sample,live_path=None):
++        if not number(now) or not number(ros_now):return self.result(True,'dynamic_clock_invalid',True)
++        if self.last_now is not None and now<self.last_now:
++            self.valid=False
++            return self.result(True,'dynamic_clock_reset_restart_required',True)
++        self.last_now=now
++        if pose is None or not all(number(v) for v in pose):
++            return self.result(self.engaged(),'dynamic_pose_unavailable',self.last_active)
++        region=self.gate.update(pose[0],pose[1])
++        s=region['progress_s_m']
++        matched=region['route_matched']
++        active=bool(matched and region['regions'])
++        approach=bool(matched and s is not None and self.start-self.approach<=s<self.start)
++        if not matched and self.last_active:
++            return self.result(True,'dynamic_route_unmatched',True)
++        self.last_active=bool(active or approach)
++        new=self._ingest(sample,now,ros_now)
++        # Away from this mission, stale obstacle input does not change other driving.
++        if not active and not self.held:
++            return self.result(False,'dynamic_approach_20kph' if approach else 'outside_dynamic_zone',approach)
++        if not number(speed) or speed<0:return self.result(True,'dynamic_speed_unavailable',True)
++        fresh=(self.valid and self.last_stamp is not None and -.05<=ros_now-self.last_stamp<=self.timeout
++               and self.last_received is not None and 0<=now-self.last_received<=self.timeout)
++        if not fresh:
++            for track in self.held.values():track['clear_since']=None;track['clear_frames']=0
++            return self.result(True,'dynamic_obstacle_input_unavailable',True)
++        if callable(live_path):live_path=live_path()
++        segments=self._segments(s if s is not None else self.start,live_path,pose)
++        if new:
++            for key,o in self.latest.items():
++                if self._near(o,segments):
++                    if key not in self.held:
++                        self.held[key]=dict(origin=(o['center_x_map'],o['center_y_map']),
++                                            last=(o['center_x_map'],o['center_y_map']),seen=now,
++                                            clear_since=None,clear_frames=0,identity_lost=False)
++                    self.held[key]['clear_since']=None;self.held[key]['clear_frames']=0
++            released=[]
++            for key,t in self.held.items():
++                o=self.latest.get(key)
++                if o is None:
++                    t['clear_since']=None;t['clear_frames']=0
++                    continue
++                dt=max(0.,now-t['seen'])
++                position=(o['center_x_map'],o['center_y_map'])
++                gap=math.hypot(position[0]-t['last'][0],position[1]-t['last'][1])
++                if dt>5. or gap>2.+20.*dt:t['identity_lost']=True
++                moved=math.hypot(position[0]-t['origin'][0],position[1]-t['origin'][1])>=.2
++                clear=(not t['identity_lost'] and moved and speed<=.2
++                       and not self._near(o,segments,self.clear_extra))
++                if clear:
++                    if t['clear_since'] is None:t['clear_since']=now
++                    t['clear_frames']+=1
++                    if now-t['clear_since']>=self.confirm and t['clear_frames']>=3:released.append(key)
++                else:t['clear_since']=None;t['clear_frames']=0
++                t.update(last=position,seen=now)
++            for key in released:del self.held[key]
++        stop=bool(self.held)
++        return self.result(stop,'dynamic_wait_for_path_clear' if stop else 'dynamic_path_clear',active or bool(self.held))
++
++    def result(self,stop,reason,limit):
++        return dict(stop=bool(stop),reason=reason,cap_mps=0. if stop else self.speed_mps if limit else None,
++                    waiting_ids=sorted(self.held),zone_or_approach=bool(self.last_active),
++                    input_error=self.input_error,
++                    clearance_frames={str(key):track['clear_frames'] for key,track in self.held.items()},
++                    zone_start_s_m=self.start,zone_end_s_m=self.end,
++                    progress_s_m=self.gate.progress_s,
++                    clear_confirm_s=self.confirm,
++                    unobserved_ids=sorted(key for key in self.held if key not in self.latest),
++                    identity_uncertain_ids=sorted(key for key,t in self.held.items() if t['identity_lost']))
++
++
++def constrain_pedals(command,status,speed):
++    if status['stop']:
++        command.accel=0.;command.brake=max(command.brake,1.)
++    elif status['cap_mps'] is not None:
++        error=status['cap_mps']-speed
++        command.accel=min(command.accel,max(0.,min(1.,error*.45)))
++        command.brake=max(command.brake,max(0.,min(1.,(-error-.05)*.4)))
++        if command.brake>0:command.accel=0.
++    return command
+--- before/src/control/turn_signal_controller/scripts/maneuver_fusion_node.py
++++ after/src/control/turn_signal_controller/scripts/maneuver_fusion_node.py
+@@ -22,6 +22,7 @@
+ from std_msgs.msg import String
+ from common.msg import ObjectInfoArray
+ from camera_perception.traffic_signal import directional_observation, count_signal_housings
++from purepursuit_mgeo.dynamic_zone_guard import DynamicZoneGuard, constrain_pedals
+ from purepursuit_mgeo.longitudinal_controller import VehicleSpeedSource
+ from purepursuit_mgeo.plan_transport import read_trajectory
+ 
+@@ -318,6 +319,25 @@
+         self.green_release = None
+         self.merge_gap = None
+         self.merge_gap_at = None
++        self.dynamic_zone_guard = None
++        self.dynamic_zone_sample = None
++        self.dynamic_zone_status = None
++        if bool(rospy.get_param("~dynamic_zone_enabled", False)):
++            self.dynamic_zone_guard = DynamicZoneGuard(
++                self.points, rospy.get_param("~avoidance_regions"),
++                expected_fingerprint=rospy.get_param("~avoidance_route_fingerprint", ""),
++                speed_kph=float(rospy.get_param("~dynamic_zone_speed_kph", 20.)),
++                approach_m=float(rospy.get_param("~dynamic_zone_approach_m", 40.)),
++                lookahead_m=float(rospy.get_param("~dynamic_zone_lookahead_m", 30.)),
++                vehicle_width_m=float(rospy.get_param("~dynamic_zone_vehicle_width_m", 1.892)),
++                margin_m=float(rospy.get_param("~dynamic_zone_margin_m", .3)),
++                clearance_extra_m=float(rospy.get_param("~dynamic_zone_clearance_extra_m", .3)),
++                clear_confirm_s=float(rospy.get_param("~dynamic_zone_clear_confirm_s", .6)),
++                timeout_s=float(rospy.get_param("~dynamic_zone_input_timeout_s", .6)),
++                prediction_s=float(rospy.get_param("~dynamic_zone_prediction_s", 2.)),
++                ego_front_m=float(rospy.get_param("~front_reference_offset_m", 3.845)))
++            rospy.Subscriber("/integration/avoidance/obstacle_states", String,
++                             self.dynamic_obstacles_callback, queue_size=1)
+         self.state_pub = rospy.Publisher("/control/maneuver_status", String, queue_size=1)
+         self.lamp_pub = rospy.Publisher("/control/turn_signal_state", String, queue_size=1)
+         self.output_pub = rospy.Publisher(rospy.get_param("~output_command_topic", "/control/maneuver_cmd"), CtrlCmd, queue_size=1)
+@@ -348,6 +368,36 @@
+             rospy.Subscriber("/stability/camera_fallback_status", String, self.fallback_status_callback, queue_size=1)
+         rospy.on_shutdown(self.shutdown)
+         self.timer = rospy.Timer(rospy.Duration(0.05), self.tick)
++
++    def dynamic_obstacles_callback(self, message):
++        try:
++            payload=json.loads(message.data)
++            if not isinstance(payload,dict):raise ValueError("not an object")
++        except (ValueError,TypeError):
++            payload={"timestamp":rospy.get_time(),"obstacles":None}
++        with self.lock:
++            self.dynamic_zone_sample=(payload,time.monotonic())
++
++    def dynamic_constraint(self, odom, now, ros_now):
++        guard=getattr(self,"dynamic_zone_guard",None)
++        if guard is None:return None
++        pose=None
++        if odom is not None and odom.value.header.frame_id=="map":
++            p=odom.value.pose.pose.position
++            pose=(float(p.x),float(p.y))
++        measured=(self.vehicle_speed_mps if self.vehicle_speed_mps is not None
++                  else self.odometry_speed_mps)
++        def current_path():
++            sample=self.executed_path_sample
++            if sample is None:return None
++            path,received=sample
++            if (0<=now-received<=self.timeout and path.header.frame_id=="map"
++                    and -.05<=ros_now-path.header.stamp.to_sec()<=self.timeout
++                    and len(path.poses)<=20000):
++                points=[(float(q.pose.position.x),float(q.pose.position.y)) for q in path.poses]
++                return points if all(math.isfinite(v) for p in points for v in p) else None
++            return None
++        return guard.step(now,ros_now,pose,measured,self.dynamic_zone_sample,current_path)
+ 
+     def highway_path_callback(self, message):
+         with self.lock:
+@@ -1792,7 +1842,22 @@
+                                     min(decision.accel_limit, fallback.value["accel"]),
+                                     max(decision.brake, fallback.value["brake"]),
+                                     decision.target_speed_kph, decision.distance_m)
++            self.dynamic_zone_status=self.dynamic_constraint(odom,now,ros_now)
++            if self.dynamic_zone_status is not None and self.dynamic_zone_status["stop"]:
++                decision=Decision("SAFE_STOP",decision.reason+"|"+self.dynamic_zone_status["reason"],
++                                  0.,1.,0.,decision.distance_m)
++            if (self.dynamic_zone_status is not None and not self.dynamic_zone_status["stop"]
++                    and self.dynamic_zone_status["cap_mps"] is not None):
++                cap_kph=self.dynamic_zone_status["cap_mps"]*3.6
++                target=(cap_kph if decision.target_speed_kph is None
++                        else min(decision.target_speed_kph,cap_kph))
++                decision=Decision(decision.mode,decision.reason,decision.accel_limit,decision.brake,
++                                  target,decision.distance_m)
+             output = overlay(nominal, decision)
++            if self.dynamic_zone_status is not None:
++                measured=(self.vehicle_speed_mps if self.vehicle_speed_mps is not None
++                          else self.odometry_speed_mps)
++                output=constrain_pedals(output,self.dynamic_zone_status,measured or 0.)
+             requested_accel = output.accel
+             output.accel = self.accel_limiter.limit(output.accel, output.brake, now, ros_now)
+             self.output_pub.publish(output)
+@@ -1826,6 +1891,8 @@
+                 signal_selection_reason = "legacy_unassociated"
+             self.state_pub.publish(String(data=json.dumps({
+                 "mode": decision.mode, "reason": decision.reason, "event": event,
++                "dynamic_zone_guard": self.dynamic_zone_status,
++                "effective_speed_target_kph": decision.target_speed_kph,
+                 "direction": direction, "signal": permission_state,
+                 "global_camera_signal": signal.value.state if signal else "STALE",
+                 "route_direction": direction, "signal_allowed_directions": allowed_directions,

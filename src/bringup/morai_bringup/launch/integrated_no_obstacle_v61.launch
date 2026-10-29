@@ -52,7 +52,7 @@
   <arg name="lane_centering_release_rate_rad_s" default="0.10" />
   <arg name="lane_info_port" default="1101" />
   <arg name="yolo_port" default="1131" />
-  <arg name="yolo_signal_roi" default="0.3 0.05 0.6 0.6" />
+  <arg name="yolo_signal_roi" default="0.3 0 0.6 0.6" />
   <arg name="yolo_signal_full_frame" default="1" />
   <arg name="yolo_signal_window_size" default="5" />
   <arg name="lane_info_device" default="auto" />

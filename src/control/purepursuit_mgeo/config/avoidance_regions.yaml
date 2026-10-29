@@ -1,0 +1,38 @@
+# Verified against the attached integrated workspace's 4430-point global route.
+# Indices are zero-based: static [553,782), dynamic [828,998).
+# Match in map XY; screenshot Z is not used to classify a road region.
+avoidance_region_gate_enabled: true
+# GPS blackout permits avoidance outside the configured waypoint regions.
+# Fresh finite map-frame EKF odometry and mission ownership checks still apply.
+avoidance_gps_blackout_override: true
+avoidance_route_fingerprint: 478510b0d72f42d3aad8454da7eb27f9288b6c4d95122aa5eb20e2e6bf1220df
+avoidance_max_route_distance_m: 12.0
+avoidance_progress_search_ahead_m: 60.0
+avoidance_progress_search_behind_m: 20.0
+avoidance_regions:
+  - name: static_obstacle
+    start_xyz: [-66.77, -198.78, 29.90]
+    end_xyz: [-59.60, -86.96, 29.86]
+  - name: dynamic_obstacle
+    start_xyz: [-59.36, -63.85, 29.86]
+    end_xyz: [-60.07, 16.88, 29.87]
+
+# Stop/wait mission for the named dynamic region.
+dynamic_zone_enabled: true
+dynamic_zone_speed_kph: 20.0
+dynamic_zone_approach_m: 40.0
+dynamic_zone_lookahead_m: 30.0
+dynamic_zone_vehicle_width_m: 1.892
+dynamic_zone_margin_m: 0.3
+dynamic_zone_clearance_extra_m: 0.3
+dynamic_zone_clear_confirm_s: 0.6
+dynamic_zone_input_timeout_s: 0.6
+dynamic_zone_prediction_s: 2.0
+dynamic_zone_stop_wait: true
+
+# New dynamic stop targets: map velocity magnitude >= 2 m/s.
+dynamic_zone_min_obstacle_speed_mps: 2.0
+
+# Continuous actual standstill before static-planner handoff.
+dynamic_zone_wait_before_static_s: 5.0
+dynamic_zone_tunnel_enabled: true

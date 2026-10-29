@@ -8,6 +8,9 @@
   <arg name="control_remote_port" default="9093" />
   <arg name="control_source_port" default="9094" />
   <arg name="enable_control" default="false" />
+  <arg name="publish_nominal_command" default="$(arg enable_control)" />
+  <arg name="nominal_command_topic" default="/control/ctrl_cmd" />
+  <arg name="enable_highway_route_acceptance" default="false" />
   <arg name="enable_nominal_purepursuit" default="true" />
   <arg name="use_curvature_speed_planner" default="true" />
   <arg name="use_roi_sensor_stack" default="false" />
@@ -104,6 +107,7 @@
     <arg name="control_remote_port" value="$(arg control_remote_port)" />
     <arg name="control_source_port" value="$(arg control_source_port)" />
     <arg name="enable_control" value="$(arg enable_control)" />
+    <arg name="publish_nominal_command" value="$(arg publish_nominal_command)" />
     <arg name="enable_purepursuit" value="$(arg enable_nominal_purepursuit)" />
     <arg name="use_curvature_speed_planner" value="$(arg use_curvature_speed_planner)" />
     <arg name="max_speed_kph" value="$(arg max_speed_kph)" />
@@ -122,7 +126,7 @@
     <arg name="max_steering_rad" value="$(arg max_steering_rad)" />
     <arg name="steering_sign" value="$(arg steering_sign)" />
     <arg name="target_speed_kph" value="$(arg max_speed_kph)" />
-    <arg name="command_topic" value="/control/ctrl_cmd" />
+    <arg name="command_topic" value="$(arg nominal_command_topic)" />
     <arg name="use_sensor_quality_gate" value="$(arg enable_sensor_quality)" />
     <arg name="quality_topic" value="/localization/sensor_quality" />
     <arg name="enable_gps_jump_gate" value="$(arg enable_sensor_quality)" />
@@ -262,6 +266,7 @@
   <node if="$(arg enable_maneuver_fusion)"
         pkg="turn_signal_controller" type="maneuver_fusion_node.py"
         name="final_ws_maneuver_fusion" output="screen">
+    <param name="highway_route_enabled" value="$(arg enable_highway_route_acceptance)" />
     <rosparam file="$(arg turn_signal_maneuvers_file)" command="load" />
     <param name="max_speed_kph" value="$(arg max_speed_kph)" />
     <param name="lateral_accel_limit_mps2" value="$(arg lateral_accel_limit_mps2)" />

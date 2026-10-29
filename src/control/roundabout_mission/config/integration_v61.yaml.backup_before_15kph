@@ -1,0 +1,118 @@
+mission_indices:
+  approach: 1720
+  stop_line: 1788
+  entry: 1800
+  conflict_start: 1822
+  conflict_end: 1832
+  merge_complete: 1865
+  exit: 1900
+circulating_conflict_indices:
+- 42
+- 52
+roi_map:
+- -125.14273116791952
+- -79.08915022564626
+- 320.5242654525531
+- 366.3261319678074
+start_hint_map:
+- -99.99
+- 315.1
+- 28.34
+start_hint_nearest_index: 1794
+start_hint_distance_m: 0.5914925691
+map_frame: map
+rate_hz: 20.0
+odom_timeout_s: 0.5
+obstacle_timeout_s: 0.6
+decision_timeout_s: 0.3
+track_hold_s: 0.4
+safe_confirm_s: 0.05
+approach_speed: 2.0
+merge_speed: 2.8
+roundabout_speed: 2.0
+exit_speed: 2.0
+max_accel: 4.5
+comfortable_decel: 1.5
+front_time_buffer_s: 0.0
+rear_time_buffer_s: 1.0
+prediction_horizon: 15.0
+min_vehicle_speed: 0.6
+direction_cos_min: 0.5
+corridor_m: 1.5
+max_path_error_m: 3.0
+lead_range_m: 35.0
+minimum_gap: 1.0
+static_minimum_gap_m: 5.0
+time_headway: 1.5
+gap_kp: 0.4
+emergency_ttc: 1.0
+emergency_gap_m: 1.5
+emergency_margin_m: 0.2
+ego_length: 4.635
+ego_width: 1.892
+ego_front_m: 3.6
+stop_margin_m: 0.5
+stop_tolerance_m: 0.2
+wait_distance_m: 10.0
+commit_distance_m: 1.0
+wheelbase_m: 3.0
+lookahead_min_m: 4.0
+lookahead_gain: 0.35
+goal_tolerance_m: 1.5
+steering_sign: 1.0
+max_steering_rad: 0.6981317008
+speed_kp: 0.55
+speed_ki: 0.0001
+speed_kd: 0.025
+max_accel_pedal: 1.0
+max_brake_pedal: 1.0
+max_accel_rate: 5.0
+max_brake_rate: 2.0
+hold_brake: 0.5
+test_speed_limit: 3.4
+minimum_merge_speed: 2.8
+maximum_merge_speed: 3.4
+cruise_speed: 2.0
+max_lateral_accel: 1.5
+lost_recheck_s: 0.3
+lost_recheck_frames: 2
+reid_max_age_s: 2.5
+reid_distance_m: 3.0
+reid_velocity_delta_mps: 3.0
+critical_track_horizon_s: 3.0
+path_file: /root/morai_ws/src/ROI/data/routes/2026_molit_comp_global_path.txt
+circulating_path_file: /root/roundabout_circulating.csv
+command_topic: /ctrl_cmd
+geometry_note: v4 footprint overlap estimate; verify in MORAI; original ego CSV unchanged
+version: 6.1.0
+speed_deadband: 0.3
+approaching_guard_s: 0.0
+safe_confirm_frames: 3
+launch_full_accel: true
+launch_accel_cmd: 0.6
+launch_release_after_yield_m: 3.0
+approach_accel_cap: 0.25
+roundabout_exit_speed: 2.2
+roundabout_slowdown_start_s: 920.0
+roundabout_exit_s: 932.8
+yield_wait_s: 886.100652688515
+roundabout_hold_speed_mps: 2.5
+roundabout_hold_deadband_mps: 0.1
+roundabout_hold_accel: 0.05
+roundabout_hold_trim_accel: 0.03
+wait_stop_tolerance_m: 0.2
+wait_stop_speed_mps: 0.2
+wait_overshoot_tolerance_m: 3.0
+trajectory_horizon_s: 60.0
+entry_occlusion_hold_s: 0.8
+entry_vehicle_length_m: 4.5
+entry_vehicle_width_m: 1.8
+entry_decision_stop_index: 1792
+entry_decision_stop_tolerance_m: 0.35
+entry_decision_stopped_speed: 0.15
+initial_empty_confirm_s: 0.3
+entry_front_release_offset_m: -7.0
+lead_relative_following_enabled: true
+lead_follow_alignment_cos_min: 0.9
+lead_follow_lateral_tolerance_m: 0.9
+lead_relative_reaction_s: 0.3

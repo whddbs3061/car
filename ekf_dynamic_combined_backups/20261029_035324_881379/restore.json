@@ -1,0 +1,25 @@
+{
+  "workspace": "/root/morai_integration_test/AutoVehicle/morai_ws",
+  "files": {
+    "src/localization/ekf_local_enu/scripts/ekf_local_enu_node.py": {
+      "existed": true,
+      "new_sha256": "98e6928db60462d469d1fcbe9280daf4c76bb8f6d6b9dc899a18c4261605fe9c"
+    },
+    "src/localization/ekf_local_enu/src/ekf_local_enu/distance_scale.py": {
+      "existed": false,
+      "new_sha256": "84d5e41a15d42daa0a552ac135ca6ede39a2409d49f4f3bfcf757c70698762fc"
+    },
+    "src/control/turn_signal_controller/scripts/maneuver_fusion_node.py": {
+      "existed": true,
+      "new_sha256": "a68c4531b9c9162bd1ad9e830cd1fe91c997828302397e1393e7784eb0b4b47a"
+    },
+    "src/control/purepursuit_mgeo/src/purepursuit_mgeo/dynamic_zone_guard.py": {
+      "existed": true,
+      "new_sha256": "3f7f7cf483d842e9f8e88b1f8d66c61405e17160d6970e8c362ecfdab8d8174b"
+    },
+    "src/control/purepursuit_mgeo/config/avoidance_regions.yaml": {
+      "existed": true,
+      "new_sha256": "3fb63fe97babbb0f556ea3c349f1b4c3dd454a10d6424fdf79e029fe7d2ed419"
+    }
+  }
+}

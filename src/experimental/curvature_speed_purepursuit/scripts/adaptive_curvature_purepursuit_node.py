@@ -110,6 +110,7 @@ class AdaptiveCurvaturePurePursuit:
         self.last_steering_rad = 0.0
         self.status_pub = rospy.Publisher("/control/curvature_status", String, queue_size=1)
         self.goal_tolerance_m = max(0.0, float(rospy.get_param("~goal_tolerance_m", 1.5)))
+        self.loop_route = bool(rospy.get_param("~loop_route", False))
 
         self.rate_hz = max(1.0, float(rospy.get_param("~control_rate_hz", 20.0)))
         self.pose_topic = rospy.get_param("~pose_topic", "/localization/odometry")
@@ -238,7 +239,7 @@ class AdaptiveCurvaturePurePursuit:
         if self.trajectory_topic:
             rospy.Subscriber(self.trajectory_topic, String, self._trajectory_cb, queue_size=1)
         elif self.use_active_path:
-            rospy.Subscriber(self.active_path_topic, Path, self._active_path_cb, queue_size=1)
+            rospy.Subscriber(self.active_path_topic, Path, self._active_path_cb, queue_size=1, buff_size=2**24)
         if self.require_fresh_stop_status and not self.trajectory_topic:
             rospy.Subscriber(self.stop_required_topic, Bool, self._stop_cb, queue_size=1)
         if self.use_target_speed_override and not self.trajectory_topic:
@@ -377,17 +378,24 @@ class AdaptiveCurvaturePurePursuit:
             age = float(rospy.get_time()) - float(stamp.to_sec())
         except (AttributeError, TypeError, ValueError, OverflowError):
             rospy.logwarn_throttle(2.0, "active path ignored: missing or invalid timestamp")
+            self.active_path_received = False
             return
         if (header.frame_id != self.map_frame or not math.isfinite(age)
                 or not -0.05 <= age <= self.active_path_timeout_sec):
             rospy.logwarn_throttle(
                 2.0,
-                "active path frame=%s ignored; expected %s",
+                "PATH_REJECT frame=%s expected=%s age=%.4f timeout=%.3f seq=%s points=%s",
                 msg.header.frame_id,
                 self.map_frame,
+                age,
+                self.active_path_timeout_sec,
+                msg.header.seq,
+                len(msg.poses),
             )
+            self.active_path_received = False
             return
         if any(not all(math.isfinite(float(v)) for v in (p.pose.position.x,p.pose.position.y,p.pose.position.z)) for p in msg.poses):
+            self.active_path_received = False
             return
         points = [
             PathPoint(
@@ -409,6 +417,7 @@ class AdaptiveCurvaturePurePursuit:
             # Empty output is a deliberate stop/no-safe-path signal.  Keep the
             # previous geometry for diagnostics, but let freshness expire.
             rospy.logwarn_throttle(1.0, "active path is empty")
+            self.active_path_received = False
             return
         try:
             points = clean_consecutive_duplicates(points)
@@ -621,7 +630,7 @@ class AdaptiveCurvaturePurePursuit:
                 else self.max_speed_kph / MPS_TO_KPH,
             )
             target_speed_kph = self._rate_limited_speed(target_speed_mps, dt) * MPS_TO_KPH
-            if global_remaining <= self.goal_tolerance_m:
+            if not self.loop_route and global_remaining <= self.goal_tolerance_m:
                 stop = True
         else:
             self.command_speed_mps = 0.0

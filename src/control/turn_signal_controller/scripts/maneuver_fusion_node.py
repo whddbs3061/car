@@ -22,6 +22,7 @@ from nav_msgs.msg import Odometry, Path as RosPath
 from std_msgs.msg import String
 from common.msg import ObjectInfoArray
 from camera_perception.traffic_signal import directional_observation, count_signal_housings
+from purepursuit_mgeo.dynamic_zone_guard import DynamicZoneGuard, constrain_pedals
 from purepursuit_mgeo.longitudinal_controller import VehicleSpeedSource
 from purepursuit_mgeo.plan_transport import read_trajectory
 
@@ -318,6 +319,30 @@ class ManeuverFusionNode:
         self.green_release = None
         self.merge_gap = None
         self.merge_gap_at = None
+        self.dynamic_zone_guard = None
+        self.dynamic_zone_sample = None
+        self.dynamic_zone_status = None
+        self.dynamic_handoff_plan_sample = None
+        self.dynamic_guard_pub = rospy.Publisher("/integration/dynamic_guard/state", String, queue_size=1)
+        if bool(rospy.get_param("~dynamic_zone_enabled", False)):
+            self.dynamic_zone_guard = DynamicZoneGuard(
+                load_path_file(rospy.get_param("~path_file")), rospy.get_param("~avoidance_regions"),
+                expected_fingerprint=rospy.get_param("~avoidance_route_fingerprint", ""),
+                speed_kph=float(rospy.get_param("~dynamic_zone_speed_kph", 20.)),
+                approach_m=float(rospy.get_param("~dynamic_zone_approach_m", 40.)),
+                lookahead_m=float(rospy.get_param("~dynamic_zone_lookahead_m", 30.)),
+                vehicle_width_m=float(rospy.get_param("~dynamic_zone_vehicle_width_m", 1.892)),
+                margin_m=float(rospy.get_param("~dynamic_zone_margin_m", .3)),
+                clearance_extra_m=float(rospy.get_param("~dynamic_zone_clearance_extra_m", .3)),
+                clear_confirm_s=float(rospy.get_param("~dynamic_zone_clear_confirm_s", .6)),
+                timeout_s=float(rospy.get_param("~dynamic_zone_input_timeout_s", .6)),
+                prediction_s=float(rospy.get_param("~dynamic_zone_prediction_s", 2.)),
+                ego_front_m=float(rospy.get_param("~front_reference_offset_m", 3.845)),
+                min_obstacle_speed_mps=float(rospy.get_param("~dynamic_zone_min_obstacle_speed_mps", 2.)),
+                wait_before_static_s=float(rospy.get_param("~dynamic_zone_wait_before_static_s", 5.)),
+                tunnel_enabled=bool(rospy.get_param("~dynamic_zone_tunnel_enabled", True)))
+            rospy.Subscriber("/integration/avoidance/obstacle_states", String,
+                             self.dynamic_obstacles_callback, queue_size=1)
         self.state_pub = rospy.Publisher("/control/maneuver_status", String, queue_size=1)
         self.lamp_pub = rospy.Publisher("/control/turn_signal_state", String, queue_size=1)
         self.output_pub = rospy.Publisher(rospy.get_param("~output_command_topic", "/control/maneuver_cmd"), CtrlCmd, queue_size=1)
@@ -348,6 +373,62 @@ class ManeuverFusionNode:
             rospy.Subscriber("/stability/camera_fallback_status", String, self.fallback_status_callback, queue_size=1)
         rospy.on_shutdown(self.shutdown)
         self.timer = rospy.Timer(rospy.Duration(0.05), self.tick)
+
+    def dynamic_obstacles_callback(self, message):
+        try:
+            payload=json.loads(message.data)
+            if not isinstance(payload,dict):raise ValueError("not an object")
+        except (ValueError,TypeError):
+            payload={"timestamp":rospy.get_time(),"obstacles":None}
+        with self.lock:
+            self.dynamic_zone_sample=(payload,time.monotonic())
+
+    def dynamic_constraint(self, odom, now, ros_now):
+        guard=getattr(self,"dynamic_zone_guard",None)
+        if guard is None:return None
+        pose=None
+        if odom is not None and odom.value.header.frame_id=="map":
+            p=odom.value.pose.pose.position
+            pose=(float(p.x),float(p.y))
+        measured=(self.vehicle_speed_mps if self.vehicle_speed_mps is not None
+                  else self.odometry_speed_mps)
+        def current_path():
+            sample=self.executed_path_sample
+            if sample is None:return None
+            path,received=sample
+            if (0<=now-received<=self.timeout and path.header.frame_id=="map"
+                    and -.05<=ros_now-path.header.stamp.to_sec()<=self.timeout
+                    and len(path.poses)<=20000):
+                points=[(float(q.pose.position.x),float(q.pose.position.y)) for q in path.poses]
+                return points if all(math.isfinite(v) for p in points for v in p) else None
+            return None
+        status=guard.step(now,ros_now,pose,measured,self.dynamic_zone_sample,current_path,
+                          tunnel_mode=self.tunnel_mode_active(now,ros_now),
+                          detour_path=lambda: self.dynamic_detour_path(odom,now,ros_now))
+        status['timestamp']=ros_now
+        self.dynamic_guard_pub.publish(String(data=json.dumps(status,allow_nan=False)))
+        return status
+
+    def dynamic_detour_path(self, odom, now, ros_now):
+        sample=getattr(self,'dynamic_handoff_plan_sample',None)
+        executed_sample=self.executed_path_sample
+        if sample is None or executed_sample is None or odom is None or self.event is not None:
+            return None
+        path,received=sample
+        executed,executed_at=executed_sample
+        if (not all(0<=now-t<=self.timeout for t in (received,executed_at))
+                or not all(-.05<=ros_now-p.header.stamp.to_sec()<=self.timeout for p in (path,executed))
+                or path.header.frame_id!='map' or executed.header.frame_id!='map'
+                or not 2<=len(path.poses)<=20000 or len(path.poses)!=len(executed.poses)):
+            return None
+        for a,b in zip(path.poses,executed.poses):
+            for axis in ('x','y','z'):
+                av,bv=float(getattr(a.pose.position,axis)),float(getattr(b.pose.position,axis))
+                if not finite(av) or not finite(bv) or abs(av-bv)>1e-6:return None
+        p=odom.value.pose.pose;q=p.orientation
+        yaw=math.atan2(2*(q.w*q.z+q.x*q.y),1-2*(q.y*q.y+q.z*q.z))
+        points=[(p.pose.position.x,p.pose.position.y) for p in path.poses]
+        return points if corridor_matches(points,p.position.x,p.position.y,yaw) else None
 
     def highway_path_callback(self, message):
         with self.lock:
@@ -431,6 +512,8 @@ class ManeuverFusionNode:
             sample = None
         with self.lock:
             self.frenet_trajectory_sample = sample
+            self.dynamic_handoff_plan_sample = (sample if sample is not None
+                and data.get("dynamic_static_requested") is True else None)
             # A plan and the controller's executed path arrive on independent
             # topics. Keep recent candidates to tolerate that one-tick ordering.
             recent = getattr(self, "tunnel_plan_samples", [])
@@ -1792,7 +1875,22 @@ class ManeuverFusionNode:
                                     min(decision.accel_limit, fallback.value["accel"]),
                                     max(decision.brake, fallback.value["brake"]),
                                     decision.target_speed_kph, decision.distance_m)
+            self.dynamic_zone_status=self.dynamic_constraint(odom,now,ros_now)
+            if self.dynamic_zone_status is not None and self.dynamic_zone_status["stop"]:
+                decision=Decision("SAFE_STOP",decision.reason+"|"+self.dynamic_zone_status["reason"],
+                                  0.,1.,0.,decision.distance_m)
+            if (self.dynamic_zone_status is not None and not self.dynamic_zone_status["stop"]
+                    and self.dynamic_zone_status["cap_mps"] is not None):
+                cap_kph=self.dynamic_zone_status["cap_mps"]*3.6
+                target=(cap_kph if decision.target_speed_kph is None
+                        else min(decision.target_speed_kph,cap_kph))
+                decision=Decision(decision.mode,decision.reason,decision.accel_limit,decision.brake,
+                                  target,decision.distance_m)
             output = overlay(nominal, decision)
+            if self.dynamic_zone_status is not None:
+                measured=(self.vehicle_speed_mps if self.vehicle_speed_mps is not None
+                          else self.odometry_speed_mps)
+                output=constrain_pedals(output,self.dynamic_zone_status,measured or 0.)
             requested_accel = output.accel
             output.accel = self.accel_limiter.limit(output.accel, output.brake, now, ros_now)
             self.output_pub.publish(output)
@@ -1826,6 +1924,8 @@ class ManeuverFusionNode:
                 signal_selection_reason = "legacy_unassociated"
             self.state_pub.publish(String(data=json.dumps({
                 "mode": decision.mode, "reason": decision.reason, "event": event,
+                "dynamic_zone_guard": self.dynamic_zone_status,
+                "effective_speed_target_kph": decision.target_speed_kph,
                 "direction": direction, "signal": permission_state,
                 "global_camera_signal": signal.value.state if signal else "STALE",
                 "route_direction": direction, "signal_allowed_directions": allowed_directions,

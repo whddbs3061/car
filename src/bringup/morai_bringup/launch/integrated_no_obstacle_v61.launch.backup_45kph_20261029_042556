@@ -1,0 +1,323 @@
+<launch>
+  <arg name="workspace_path" default="$(env HOME)/morai_ws" />
+  <arg name="path_file" default="$(arg workspace_path)/data/routes/2026_molit_comp_global_path.txt" />
+  <arg name="signal_config_file" default="$(arg workspace_path)/config/curvature_signal.yaml" />
+  <arg name="signal_mgeo_path" default="$(find camera_perception)/lane/mgeo/R_KR_PR_K-city_2025" />
+  <arg name="enable_control" default="false" />
+  <arg name="enable_camera_dashboard" default="true" />
+  <arg name="camera_dashboard_port" default="8765" />
+  <arg name="bind_ip" default="0.0.0.0" />
+  <arg name="morai_host_ip" default="192.168.10.14" />
+  <arg name="gps_port" default="3001" />
+  <arg name="imu_port" default="4001" />
+  <arg name="ego_status_port" default="1911" />
+  <arg name="control_remote_port" default="9093" />
+  <arg name="control_source_port" default="9094" />
+  <arg name="max_speed_kph" default="7.2" />
+  <arg name="vehicle_speed_topic" default="/Ego_topic" />
+  <arg name="require_vehicle_speed" default="true" />
+  <arg name="vehicle_speed_timeout_sec" default="0.5" />
+  <arg name="speed_preview_time_sec" default="0.8" />
+  <arg name="lateral_accel_limit_mps2" default="1.0" />
+  <arg name="curve_lateral_accel_limit_mps2" default="0.45" />
+  <arg name="turn_lateral_accel_limit_mps2" default="2.0" />
+  <arg name="max_accel_mps2" default="1.0" />
+  <arg name="max_decel_mps2" default="1.5" />
+  <arg name="curve_planning_decel_mps2" default="0.8" />
+  <arg name="speed_kp" default="0.35" />
+  <arg name="speed_ki" default="0.03" />
+  <arg name="pedal_accel_rise_rate_per_sec" default="0.7" />
+  <arg name="pedal_brake_rise_rate_per_sec" default="1.5" />
+  <arg name="pedal_release_rate_per_sec" default="2.0" />
+  <arg name="speed_integral_limit_kph_s" default="10.8" />
+  <arg name="speed_error_deadband_kph" default="0.5" />
+  <arg name="lookahead_min_m" default="4.0" />
+  <arg name="lookahead_gain" default="0.35" />
+  <arg name="lookahead_max_m" default="12.0" />
+  <arg name="lookahead_tight_min_m" default="2.2" />
+  <arg name="lookahead_curvature_gain" default="6.0" />
+  <arg name="steering_feedforward_weight" default="0.35" />
+  <arg name="max_steering_rate_rad_s" default="0.5" />
+  <arg name="wheelbase_m" default="3.0" />
+  <arg name="max_steering_rad" default="0.6981317008" />
+  <arg name="steering_sign" default="1.0" />
+  <arg name="enable_lane_centering" default="false" />
+  <arg name="lane_centering_weight" default="0.25" />
+  <arg name="lane_centering_max_correction_rad" default="0.045" />
+  <arg name="lane_centering_min_confidence" default="0.65" />
+  <arg name="lane_centering_timeout_sec" default="0.4" />
+  <arg name="lane_centering_min_frames" default="4" />
+  <arg name="lane_centering_filter_tau_sec" default="0.35" />
+  <arg name="lane_centering_correction_rate_rad_s" default="0.06" />
+  <arg name="lane_centering_release_rate_rad_s" default="0.10" />
+  <arg name="lane_info_port" default="1101" />
+  <arg name="yolo_port" default="1131" />
+  <arg name="yolo_signal_roi" default="0.3 0.05 0.6 0.6" />
+  <arg name="yolo_signal_full_frame" default="1" />
+  <arg name="yolo_signal_window_size" default="5" />
+  <arg name="lane_info_device" default="auto" />
+  <arg name="lane_info_every" default="1" />
+  <arg name="lane_info_timeout_s" default="0.6" />
+  <arg name="lane_min_confidence" default="0.45" />
+  <arg name="lane_info_checkpoint" default="$(find camera_perception)/models/highway_best.pt" />
+  <arg name="lane_info_cam_set" default="$(find camera_perception)/lane/cam_set.json" />
+  <arg name="stopline_front_reference_offset_m" default="3.845" />
+  <arg name="stopline_hold_distance_m" default="0.5" />
+  <arg name="stopline_planning_decel_mps2" default="1.2" />
+  <arg name="stopline_brake_ramp_distance_m" default="0.0" />
+  <arg name="stopline_settle_distance_m" default="0.15" />
+  <arg name="stopline_approach_speed_kph" default="30.0" />
+  <arg name="mapped_stopline_approach_distance_m" default="80.0" />
+  <arg name="stopline_match_tolerance_m" default="4.0" />
+  <arg name="stopline_cap_release_after_m" default="5.0" />
+  <arg name="stopline_cap_max_detection_range_m" default="60.0" />
+  <arg name="stopline_cap_min_confidence" default="0.55" />
+  <arg name="right_on_green" default="true" />
+  <include file="$(find morai_bringup)/launch/morai_udp_ekf_purepursuit.launch">
+    <arg name="workspace_path" value="$(arg workspace_path)" />
+    <arg name="path_file" value="$(arg path_file)" />
+    <arg name="enable_purepursuit" value="false" />
+    <arg name="enable_control" value="$(arg enable_control)" />
+    <arg name="bind_ip" value="$(arg bind_ip)" />
+    <arg name="morai_host_ip" value="$(arg morai_host_ip)" />
+    <arg name="gps_port" value="$(arg gps_port)" />
+    <arg name="imu_port" value="$(arg imu_port)" />
+    <arg name="ego_status_port" value="$(arg ego_status_port)" />
+    <arg name="control_remote_port" value="$(arg control_remote_port)" />
+    <arg name="control_source_port" value="$(arg control_source_port)" />
+    <arg name="max_steering_rad" value="$(arg max_steering_rad)" />
+  </include>
+  <node pkg="curvature_speed_purepursuit" type="adaptive_curvature_purepursuit_node.py" name="curvature_speed_purepursuit" output="screen">
+    <param name="path_file" value="$(arg path_file)" />
+    <param name="loop_route" value="true" />
+    <param name="pose_topic" value="/localization/odometry" />
+    <param name="publish_command" value="true" />
+    <param name="stopline_topic" value="/perception/camera/stopline" />
+    <param name="stopline_speed_cap_enabled" value="false" />
+    <param name="stopline_approach_speed_kph" value="$(arg stopline_approach_speed_kph)" />
+    <param name="stopline_cap_release_after_m" value="$(arg stopline_cap_release_after_m)" />
+    <param name="stopline_cap_max_detection_range_m" value="$(arg stopline_cap_max_detection_range_m)" />
+    <param name="stopline_cap_min_confidence" value="$(arg stopline_cap_min_confidence)" />
+    <param name="longl_cmd_type" value="1" />
+    <param name="pose_timeout_sec" value="0.5" />
+    <param name="max_speed_kph" value="$(arg max_speed_kph)" />
+    <param name="vehicle_speed_topic" value="$(arg vehicle_speed_topic)" />
+    <param name="require_vehicle_speed" value="$(arg require_vehicle_speed)" />
+    <param name="vehicle_speed_timeout_sec" value="$(arg vehicle_speed_timeout_sec)" />
+    <param name="speed_preview_time_sec" value="$(arg speed_preview_time_sec)" />
+    <param name="lateral_accel_limit_mps2" value="$(arg curve_lateral_accel_limit_mps2)" />
+    <param name="max_accel_mps2" value="$(arg max_accel_mps2)" />
+    <param name="max_decel_mps2" value="$(arg max_decel_mps2)" />
+    <param name="conservative_curve_speed_enabled" value="true" />
+    <param name="metre_sampled_steering_curvature" value="true" />
+    <param name="bridge_reversing_curves" value="true" />
+    <param name="path_lateral_feedback_gain" value="0.4" />
+    <param name="path_lateral_feedback_max_rad" value="0.08" />
+    <param name="curve_planning_decel_mps2" value="$(arg curve_planning_decel_mps2)" />
+    <param name="speed_kp" value="$(arg speed_kp)" />
+    <param name="speed_ki" value="$(arg speed_ki)" />
+    <param name="pedal_accel_rise_rate_per_sec" value="$(arg pedal_accel_rise_rate_per_sec)" />
+    <param name="pedal_brake_rise_rate_per_sec" value="$(arg pedal_brake_rise_rate_per_sec)" />
+    <param name="pedal_release_rate_per_sec" value="$(arg pedal_release_rate_per_sec)" />
+    <param name="speed_integral_limit_kph_s" value="$(arg speed_integral_limit_kph_s)" />
+    <param name="speed_error_deadband_kph" value="$(arg speed_error_deadband_kph)" />
+    <param name="lookahead_min_m" value="$(arg lookahead_min_m)" />
+    <param name="lookahead_gain" value="$(arg lookahead_gain)" />
+    <param name="lookahead_max_m" value="$(arg lookahead_max_m)" />
+    <param name="lookahead_tight_min_m" value="$(arg lookahead_tight_min_m)" />
+    <param name="lookahead_curvature_gain" value="$(arg lookahead_curvature_gain)" />
+    <param name="steering_feedforward_weight" value="$(arg steering_feedforward_weight)" />
+    <param name="max_steering_rate_rad_s" value="$(arg max_steering_rate_rad_s)" />
+    <param name="wheelbase_m" value="$(arg wheelbase_m)" />
+    <param name="max_steering_rad" value="$(arg max_steering_rad)" />
+    <param name="steering_sign" value="$(arg steering_sign)" />
+    <param name="enable_lane_centering" value="$(arg enable_lane_centering)" />
+    <param name="lane_centering_weight" value="$(arg lane_centering_weight)" />
+    <param name="lane_centering_max_correction_rad" value="$(arg lane_centering_max_correction_rad)" />
+    <param name="lane_centering_min_confidence" value="$(arg lane_centering_min_confidence)" />
+    <param name="lane_centering_timeout_sec" value="$(arg lane_centering_timeout_sec)" />
+    <param name="lane_centering_min_frames" value="$(arg lane_centering_min_frames)" />
+    <param name="lane_centering_filter_tau_sec" value="$(arg lane_centering_filter_tau_sec)" />
+    <param name="lane_centering_correction_rate_rad_s" value="$(arg lane_centering_correction_rate_rad_s)" />
+    <param name="lane_centering_release_rate_rad_s" value="$(arg lane_centering_release_rate_rad_s)" />
+    <param name="lane_info_topic" value="/perception/camera/lane_info" />
+    <param name="command_topic" value="/integration/nominal_cmd" />
+    <param name="use_active_path" value="true" />
+    <param name="require_active_path" value="true" />
+    <param name="active_path_topic" value="/highway_lane_strategy/active_path" />
+    <param name="trajectory_topic" value="" />
+    <param name="stop_required_topic" value="/highway_lane_strategy/stop_required" />
+    <param name="require_fresh_stop_status" value="true" />
+    <param name="use_target_speed_override" value="true" />
+    <param name="target_speed_override_topic" value="/highway_lane_strategy/target_speed_mps" />
+    <param name="enable_merge_gate" value="false" />
+    <param name="require_route_mission_ready" value="false" />
+  </node>
+  <node pkg="camera_perception" type="highway_lane_camera_node.py" name="highway_lane_camera" output="screen" args="--ip $(arg bind_ip) --port $(arg lane_info_port) --checkpoint $(arg lane_info_checkpoint) --cam-set $(arg lane_info_cam_set) --device $(arg lane_info_device) --every $(arg lane_info_every) --topic /perception/camera/lane_info_raw">
+    <env name="MORAI_CAMERA_DEBUG" value="$(arg enable_camera_dashboard)" />
+  </node>
+  <node if="$(arg enable_camera_dashboard)" pkg="camera_perception" type="camera_debug_dashboard.py" name="camera_debug_dashboard" output="screen">
+    <param name="port" value="$(arg camera_dashboard_port)" />
+  </node>
+  <node pkg="camera_perception" type="lane_info_contract_node.py" name="lane_info_contract" output="screen">
+    <param name="timeout_sec" value="$(arg lane_info_timeout_s)" />
+    <param name="min_confidence" value="$(arg lane_min_confidence)" />
+  </node>
+  <include file="$(find camera_perception)/launch/camera_perception.launch">
+    <arg name="camera_ip" value="$(arg bind_ip)" />
+    <arg name="enable_lane" value="false" />
+    <arg name="enable_yolo" value="true" />
+    <arg name="enable_debug_images" value="$(arg enable_camera_dashboard)" />
+    <arg name="yolo_port" value="$(arg yolo_port)" />
+    <arg name="yolo_signal_roi" value="$(arg yolo_signal_roi)" />
+    <arg name="yolo_signal_full_frame" value="$(arg yolo_signal_full_frame)" />
+    <arg name="yolo_signal_window_size" value="$(arg yolo_signal_window_size)" />
+    <arg name="enable_highway_gate" value="false" />
+    <arg name="enable_pedestrian_crossing" value="false" />
+    <arg name="enable_intersection_detection" value="false" />
+  </include>
+  <node pkg="turn_signal_controller" type="maneuver_fusion_node.py" name="curvature_signal_controller" output="screen">
+    <rosparam file="$(arg signal_config_file)" command="load" />
+    <rosparam param="maneuvers">[]</rosparam>
+    <param name="highway_route_enabled" value="true" />
+    <param name="highway_route_start_s_m" value="1118.742" />
+    <param name="highway_route_end_s_m" value="1741.721" />
+    <param name="path_file" value="$(arg path_file)" />
+    <param name="loop_route" value="true" />
+    <param name="signal_mgeo_path" value="$(arg signal_mgeo_path)" />
+    <param name="route_stopline_match_tolerance_m" value="$(arg stopline_match_tolerance_m)" />
+    <param name="nominal_command_topic" value="/control/ctrl_cmd" />
+    <param name="output_command_topic" value="/ctrl_cmd" />
+    <param name="signal_topic" value="/perception/traffic_light/directional_state" />
+    <param name="signal_objects_topic" value="/detection/traffic_light" />
+    <param name="stopline_topic" value="/perception/camera/stopline" />
+    <param name="odometry_topic" value="/localization/odometry" />
+    <param name="reference_path_topic" value="/experimental/curvature_reference_path" />
+    <param name="require_route_signal_context" value="false" />
+    <param name="require_signalized_contexts" value="true" />
+    <param name="require_calibrated_route_camera" value="true" />
+    <param name="stopline_requires_detected_signal" value="true" />
+    <param name="require_reference_path_match" value="true" />
+    <param name="require_fresh_camera_stream" value="false" />
+    <param name="require_sensor_quality" value="false" />
+    <param name="require_fresh_safety" value="false" />
+    <param name="safety_topic" value="/curvature_signal/unused_external_safety" />
+    <param name="allow_blackout_lane_corridor" value="false" />
+    <param name="test_without_turn_signals" value="true" />
+    <param name="lamp_output_enabled" value="false" />
+    <param name="right_on_green" value="$(arg right_on_green)" />
+    <param name="max_speed_kph" value="$(arg max_speed_kph)" />
+    <param name="vehicle_speed_topic" value="$(arg vehicle_speed_topic)" />
+    <param name="require_vehicle_speed" value="$(arg require_vehicle_speed)" />
+    <param name="vehicle_speed_timeout_sec" value="$(arg vehicle_speed_timeout_sec)" />
+    <param name="speed_governor_enabled" value="true" />
+    <param name="mapped_stopline_approach_speed_kph" value="$(arg stopline_approach_speed_kph)" />
+    <param name="mapped_stopline_approach_distance_m" value="$(arg mapped_stopline_approach_distance_m)" />
+    <param name="mapped_stopline_cap_release_after_m" value="$(arg stopline_cap_release_after_m)" />
+    <param name="lateral_accel_limit_mps2" value="$(arg turn_lateral_accel_limit_mps2)" />
+    <param name="front_reference_offset_m" value="$(arg stopline_front_reference_offset_m)" />
+    <param name="front_axle_offset_m" value="$(arg wheelbase_m)" />
+    <param name="hold_distance_m" value="$(arg stopline_hold_distance_m)" />
+    <param name="max_decel_mps2" value="$(arg max_decel_mps2)" />
+    <param name="planning_decel_mps2" value="$(arg stopline_planning_decel_mps2)" />
+    <param name="brake_ramp_distance_m" value="$(arg stopline_brake_ramp_distance_m)" />
+    <param name="settle_distance_m" value="$(arg stopline_settle_distance_m)" />
+  </node>
+  <arg name="circulating_path_file" default="$(arg workspace_path)/data/routes/roundabout_circulating.csv" />
+  <include file="$(find lidar_perception)/launch/lidar_tracking.launch">
+    <arg name="rviz" value="false" />
+  </include>
+  <node pkg="purepursuit_mgeo" type="uploaded_highway_lane_strategy_node.py" name="highway_lane_strategy" output="screen">
+    <param name="path_file" value="$(arg path_file)" />
+    <param name="map_frame" value="map" />
+    <param name="odom_topic" value="/localization/odometry" />
+    <param name="obstacle_topic" value="/perception/lidar/tracked_obstacles_map" />
+    <param name="lane_info_topic" value="/perception/camera/lane_info" />
+    <param name="highway_topic" value="/perception/camera/highway_environment" />
+    <param name="target_lane_width_m" value="3.3" />
+    <param name="highway_request_topic" value="/planning/highway_lane_change_request" />
+    <param name="merge_available_topic" value="/perception/merge_gap/available" />
+    <param name="merge_unavailable_topic" value="/perception/merge_gap/unavailable" />
+    <param name="mission_request_bypass_sensor_merge_gate" value="true" />
+    <param name="cruise_speed_mps" value="$(eval float(arg('max_speed_kph')) / 3.6)" />
+    <param name="highway_confirm_s" value="0.5" />
+    <param name="ready_confirm_s" value="0.5" />
+    <param name="min_lane_confidence" value="0.45" />
+    <param name="lane_width_min_m" value="2.7" />
+    <param name="lane_width_max_m" value="4.2" />
+    <param name="require_left_dashed" value="true" />
+    <param name="left_divider_expected_tol_m" value="0.90" />
+    <param name="inner_center_max_abs_y_m" value="0.90" />
+    <param name="inner_lane_invalid_grace_s" value="1.20" />
+    <param name="inner_lane_grace_speed_mps" value="1.50" />
+    <param name="inner_stitch_keep_m" value="7.0" />
+    <param name="inner_stitch_blend_m" value="10.0" />
+    <param name="inner_spatial_window" value="3" />
+    <param name="inner_spatial_max_dy_per_m" value="0.22" />
+    <param name="inner_recovery_timeout_s" value="3.0" />
+    <param name="left_change_rearm_min_s" value="2.5" />
+    <param name="left_change_rearm_min_m" value="8.0" />
+    <param name="left_change_stable_lateral_m" value="0.35" />
+    <param name="left_change_stable_heading_rad" value="0.1222" />
+    <param name="left_change_stable_confirm_s" value="0.8" />
+    <param name="inner_rearm_dropout_grace_s" value="0.20" />
+    <param name="inner_hold_gap_shaping_enabled" value="false" />
+    <param name="inner_hold_gap_max_slowdown_mps" value="0.75" />
+    <param name="inner_hold_gap_rear_min_ttc_s" value="4.0" />
+    <param name="change_start_m" value="6.0" />
+    <param name="change_entry_align_m" value="18.0" />
+    <param name="change_min_length_m" value="40.0" />
+    <param name="change_max_length_m" value="48.0" />
+    <param name="change_time_s" value="8.5" />
+    <param name="change_post_hold_m" value="14.0" />
+    <param name="change_settle_m" value="6.0" />
+    <param name="change_endpoint_guard_m" value="6.0" />
+    <param name="max_lateral_accel_mps2" value="1.6" />
+    <param name="front_min_gap_m" value="6.0" />
+    <param name="rear_min_gap_m" value="7.0" />
+    <param name="time_headway_s" value="1.5" />
+    <param name="min_ttc_s" value="3.0" />
+    <param name="gap_search_range_m" value="50.0" />
+    <param name="follow_standstill_gap_m" value="4.0" />
+    <param name="follow_time_headway_s" value="1.6" />
+    <param name="follow_gain" value="0.35" />
+    <param name="follow_search_m" value="60.0" />
+    <param name="current_lane_center_gate_m" value="1.15" />
+    <param name="target_lane_center_gate_m" value="1.50" />
+    <param name="lead_overlap_tolerance_m" value="0.25" />
+    <param name="emergency_gap_m" value="1.5" />
+    <param name="emergency_ttc_s" value="1.0" />
+    <param name="vehicle_length_m" value="4.635" />
+    <param name="vehicle_width_m" value="1.892" />
+    <param name="vehicle_center_from_base_m" value="1.50" />
+    <param name="collision_long_margin_m" value="0.50" />
+    <param name="collision_lat_margin_m" value="0.35" />
+    <param name="release_global_d_m" value="0.55" />
+    <param name="release_confirm_s" value="0.6" />
+    <param name="min_inner_hold_after_change_m" value="8.0" />
+    <param name="rejoin_start_global_d_m" value="1.80" />
+    <param name="rejoin_length_m" value="18.0" />
+    <param name="rejoin_complete_global_d_m" value="0.45" />
+    <param name="base_path_topic" value="/integration/base_path" />
+    <param name="base_stop_topic" value="/integration/base_stop" />
+  </node>
+  <node pkg="roundabout_mission" type="roundabout_merge_gate.py" name="roundabout_merge_gate" output="screen" required="true">
+    <rosparam command="load" file="$(find roundabout_mission)/config/integration_v61.yaml" />
+    <param name="path_file" value="$(arg path_file)" />
+    <param name="circulating_path_file" value="$(arg circulating_path_file)" />
+    <param name="enable_control" value="true" />
+    <param name="command_topic" value="/integration/roundabout_cmd" />
+    <param name="evaluation_mode" value="false" />
+  </node>
+  <node pkg="roundabout_mission" type="roundabout_test_driver.py" name="roundabout_test_driver" output="screen" required="true">
+    <rosparam command="load" file="$(find roundabout_mission)/config/integration_v61.yaml" />
+    <param name="path_file" value="$(arg path_file)" />
+    <param name="circulating_path_file" value="$(arg circulating_path_file)" />
+    <param name="enable_control" value="false" />
+    <param name="command_topic" value="/integration/roundabout_cmd" />
+    <param name="evaluation_mode" value="false" />
+  </node>
+  <node pkg="purepursuit_mgeo" type="no_obstacle_integration_node.py" name="no_obstacle_integration" output="screen" required="true">
+    <param name="path_file" value="$(arg path_file)" />
+  </node>
+</launch>

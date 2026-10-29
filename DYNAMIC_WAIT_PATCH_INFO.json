@@ -1,0 +1,46 @@
+{
+  "target_workspace": "/root/morai_integration_test/AutoVehicle/morai_ws",
+  "launch": "morai_bringup/integrated_obstacle_v61.launch",
+  "tests_passed": 265,
+  "tests_skipped": 1,
+  "ros_build_run": false,
+  "morai_driving_run": false,
+  "files": [
+    {
+      "path": "src/bringup/morai_bringup/launch/integrated_obstacle_v61.launch",
+      "sha256": "8bc918a3ec2cfb2ad0f4a37302b49de35994889c0da12b4e4c5c7dd96382dd8d",
+      "original_sha256": "60e3715a4f5525462497f61f158695fe0f63b858178ecf7d51474a344d644e33",
+      "previous_region_patch_sha256": "c4e6516ebf39a8dff187506745e7f20cb1cbc40c7a9af9c7b75dc77b3c8a825a"
+    },
+    {
+      "path": "src/control/purepursuit_mgeo/config/avoidance_regions.yaml",
+      "sha256": "7407a94274aee7affd12d70c11a8e477a349b6f71c3517a3b9f4dc9f66b49417",
+      "original_sha256": null,
+      "previous_region_patch_sha256": "40a934501fb41f3788efd9332cf585b26ed765821cab37512b88adf24ad924d0"
+    },
+    {
+      "path": "src/control/purepursuit_mgeo/scripts/v61_obstacle_avoidance_node.py",
+      "sha256": "496d20b12ded5ebaec094dd00e7a741c182f4452d52e9090096e32a21905351b",
+      "original_sha256": "4868ff5f6337fbae6bde71a013f8b60efb524468dc8dd3ed697687dadcb6ed2d",
+      "previous_region_patch_sha256": "8952ed2602e1a5ce060e5849e7a3e84dfc85b53d82e22d72d97a0e34f0f17085"
+    },
+    {
+      "path": "src/control/purepursuit_mgeo/src/purepursuit_mgeo/dynamic_zone_guard.py",
+      "sha256": "a5a796b21b97595cbaf6a2639011ca43cdedb1dfdc80ec68a7baf91aae81c72f",
+      "original_sha256": null,
+      "previous_region_patch_sha256": null
+    },
+    {
+      "path": "src/control/purepursuit_mgeo/src/purepursuit_mgeo/route_avoidance_gate.py",
+      "sha256": "7d9e984244ef484e870296e65d27bb0edce4c5d7296956032a7bd9070b77e074",
+      "original_sha256": null,
+      "previous_region_patch_sha256": "7d9e984244ef484e870296e65d27bb0edce4c5d7296956032a7bd9070b77e074"
+    },
+    {
+      "path": "src/control/turn_signal_controller/scripts/maneuver_fusion_node.py",
+      "sha256": "28b4d2733cdfac516d31249da3a446a32d6ac745265c7869f122003781a64677",
+      "original_sha256": "5585808f300a4af5219ec1ce2987fecd201255d6b1774a2ea316c45b30355a75",
+      "previous_region_patch_sha256": "5585808f300a4af5219ec1ce2987fecd201255d6b1774a2ea316c45b30355a75"
+    }
+  ]
+}

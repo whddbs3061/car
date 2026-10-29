@@ -2,6 +2,7 @@
   <arg name="workspace_path" default="$(env HOME)/morai_ws" />
   <arg name="avoidance_planning_times_s" default="[2.0, 3.0, 4.0]" />
   <arg name="avoidance_planning_rate_hz" default="5.0" />
+  <arg name="avoidance_regions_file" default="$(find purepursuit_mgeo)/config/avoidance_regions.yaml" />
   <arg name="path_file" default="$(arg workspace_path)/data/routes/2026_molit_comp_global_path.txt" />
   <arg name="signal_config_file" default="$(arg workspace_path)/config/curvature_signal.yaml" />
   <arg name="signal_mgeo_path" default="$(find camera_perception)/lane/mgeo/R_KR_PR_K-city_2025" />
@@ -64,7 +65,7 @@
   <arg name="lane_info_checkpoint" default="$(find camera_perception)/models/highway_best.pt" />
   <arg name="lane_info_cam_set" default="$(find camera_perception)/lane/cam_set.json" />
   <arg name="stopline_front_reference_offset_m" default="3.845" />
-  <arg name="stopline_hold_distance_m" default="0.5" />
+  <arg name="stopline_hold_distance_m" default="3.0" />
   <arg name="stopline_planning_decel_mps2" default="1.2" />
   <arg name="stopline_brake_ramp_distance_m" default="0.0" />
   <arg name="stopline_settle_distance_m" default="0.15" />
@@ -179,6 +180,7 @@
     <arg name="enable_intersection_detection" value="false" />
   </include>
   <node pkg="turn_signal_controller" type="maneuver_fusion_node.py" name="curvature_signal_controller" output="screen">
+    <rosparam command="load" file="$(arg avoidance_regions_file)" />
     <rosparam file="$(arg signal_config_file)" command="load" />
     <rosparam param="maneuvers">[]</rosparam>
     <param name="highway_route_enabled" value="true" />
@@ -329,6 +331,7 @@
     <param name="dynamic_topic" value="/integration/avoidance/dynamic_obstacles" />
   </node>
   <node pkg="purepursuit_mgeo" type="v61_obstacle_avoidance_node.py" name="frenet_fsm_controller" output="screen" required="true">
+    <rosparam command="load" file="$(arg avoidance_regions_file)" />
     <param name="path_file" value="$(arg path_file)" />
     <param name="enable_control" value="false" />
     <param name="odometry_topic" value="/localization/odometry" />

@@ -13,7 +13,7 @@
   <arg name="yolo_port" default="1131" />
   <arg name="base_model_path" default="$(find camera_perception)/models/yolov8s.pt" />
   <arg name="custom_model_path" default="$(find camera_perception)/models/best0917.pt" />
-  <arg name="yolo_confidence" default="0.4" />
+  <arg name="yolo_confidence" default="0.6" />
   <arg name="yolo_inference_size" default="416" />
   <!-- Normalized XMIN YMIN XMAX YMAX; full-frame inference supplements this crop. -->
   <arg name="yolo_signal_roi" default="0.3 0.05 0.6 0.6" />

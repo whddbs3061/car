@@ -11,6 +11,7 @@
   <arg name="control_source_port" default="9094" />
   <arg name="enable_purepursuit" default="true" />
   <arg name="enable_control" default="false" />
+  <arg name="publish_nominal_command" default="$(arg enable_control)" />
   <arg name="wheelbase_m" default="3.0" />
   <arg name="command_topic" default="/ctrl_cmd" />
   <arg name="longl_cmd_type" default="1" />
@@ -143,7 +144,7 @@
       <param name="path_file" value="$(arg path_file)" />
       <param name="pose_topic" value="/localization/odometry" />
       <param name="command_topic" value="$(arg command_topic)" />
-      <param name="publish_command" value="$(arg enable_control)" />
+      <param name="publish_command" value="$(arg publish_nominal_command)" />
       <param name="pose_timeout_sec" value="0.5" />
       <param name="duplicate_epsilon_m" value="0.000001" />
       <param name="curvature_half_window_points" value="$(arg curvature_half_window_points)" />
