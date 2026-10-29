@@ -39,6 +39,11 @@ gap_comfort_decel_mps2: 3.0
 front_speed_margin_mps: 0.5
 rear_speed_margin_mps: 0.5
 commit_confirm_ticks: 1
+# Escape a slower car ahead by the lane change instead of braking for it:
+# it needs only gap_front_min_m until the ego is beside it, and the ego is
+# not slowed for it while changing (emergency_gap_m still stops).
+# false = brake to its speed first, the behaviour before 2026-10-30.
+lead_escape: true
 
 # ---- Lead following ----------------------------------------------------------
 follow_standstill_m: 4.0

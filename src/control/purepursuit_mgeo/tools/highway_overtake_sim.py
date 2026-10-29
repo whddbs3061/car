@@ -658,6 +658,7 @@ def run(scenario: Scenario, seed: int, cfg_overrides: Optional[Dict] = None,
     frames: List[Dict] = []
     events: List[Tuple[float, float, str]] = []
     collisions, solid_touch, island_s = [], 0.0, 0.0
+    min_front_gap, min_speed = None, None
     touched: Dict[str, float] = {}
     max_alat, max_head, max_alat_after = 0.0, 0.0, 0.0
     t_zone_start = t_zone_end = None
@@ -754,6 +755,13 @@ def run(scenario: Scenario, seed: int, cfg_overrides: Optional[Dict] = None,
                 if boxes_overlap(ego_box, box_corners(npc.x, npc.y, npc.yaw, npc.length, npc.width)):
                     if not collisions or collisions[-1]["id"] != npc.id:
                         collisions.append({"t": round(t, 2), "x": round(ex, 1), "id": npc.id})
+        if ENTRY_TAPER[1] <= ex <= ZONE_END_X:
+            # Bumper gap to the nearest car ahead that the ego overlaps sideways.
+            for npc in npcs:
+                if npc.x > cx and abs(npc.y - cy) < 0.5*(EGO_W + npc.width):
+                    gap = (npc.x - 0.5*npc.length) - (cx + 0.5*EGO_L)
+                    min_front_gap = gap if min_front_gap is None else min(min_front_gap, gap)
+            min_speed = ev if min_speed is None else min(min_speed, ev)
         if scored and cy > 12.25 - 0.3:
             lane_entered_l4 = True
         edge = island_edge_y(cx)
@@ -792,6 +800,8 @@ def run(scenario: Scenario, seed: int, cfg_overrides: Optional[Dict] = None,
         "solid_touch_s": round(solid_touch, 2),
         "solid_lines_touched": {k: round(v, 2) for k, v in touched.items()},
         "island_s": round(island_s, 2),
+        "min_front_gap_m": None if min_front_gap is None else round(min_front_gap, 2),
+        "min_speed_kmh": None if min_speed is None else round(min_speed*3.6, 1),
         "entered_forbidden_lane": lane_entered_l4,
         "lane_changes": len(commits),
         "commits": commits,
@@ -1093,11 +1103,12 @@ def main(argv=None) -> int:
             problems = verdict(result)
             failures += bool(problems)
             print("%-13s seed=%d changes=%d zone_time=%5ss end=%5skm/h a_lat=%.2f head=%.1fdeg "
-                  "offset=%.1fm limit=%skm/h -> %s" % (
+                  "offset=%.1fm limit=%skm/h min_v=%skm/h front_gap=%sm -> %s" % (
                       name, seed, result["lane_changes"], result["zone_time_s"],
                       result["speed_at_zone_end_kmh"], result["max_lateral_accel_mps2"],
                       result["max_heading_deg"], result["max_route_offset_m"],
-                      result["min_controller_limit_kmh"], "; ".join(problems) or "OK"))
+                      result["min_controller_limit_kmh"], result["min_speed_kmh"],
+                      result["min_front_gap_m"], "; ".join(problems) or "OK"))
             if args.out:
                 plot(result, os.path.join(args.out, "%s_seed%d.png" % (name, seed)))
             summary.append({k: v for k, v in result.items() if not k.startswith("_")})
