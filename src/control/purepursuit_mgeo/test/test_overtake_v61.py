@@ -155,6 +155,52 @@ class PassThroughMatchesV61Test(unittest.TestCase):
         self.assertGreater(published, 200)
 
 
+class TeamStateReadersTest(unittest.TestCase):
+    """/highway_lane_strategy/state as the team's v61 nodes read it.
+
+    v61_obstacle_avoidance_node mission_owner: a state without a fresh ROS
+    "timestamp" or a bool "active" is "mission_status_unavailable" and no
+    avoidance starts.  maneuver_fusion_node accepts an offset from the global
+    path only with a fresh "timestamp", "stop" false and either an active
+    LANE_CHANGE/INNER_HOLD/REJOIN (highway_route_matches) or an inactive
+    OFF/DONE with a matching avoidance plan (frenet_route_matches).
+    """
+
+    def setUp(self):
+        from test_highway_overtake_node import OvertakeNodeTest
+        self.harness = OvertakeNodeTest("test_zone_resolution_and_regions_handoff")
+        self.harness.setUp()
+
+    def published(self):
+        return self.harness.state()
+
+    def assert_readable(self, state):
+        now = self.harness.clock.now
+        self.assertIs(type(state["active"]), bool)
+        self.assertIs(type(state["stop"]), bool)
+        self.assertTrue(-0.05 <= now - float(state["timestamp"]) <= 0.7)    # avoidance: 0.7 s
+
+    def test_outside_the_zone_avoidance_may_own_the_path(self):
+        self.harness.drive(600.0, 20)
+        state = self.published()
+        self.assert_readable(state)
+        self.assertEqual((state["state"], state["active"], state["stop"]), ("OFF", False, False))
+
+    def test_inside_the_zone_the_offset_is_accepted(self):
+        h = self.harness
+        h.drive(h.zone[0] + 20.0, 60)
+        state = self.published()
+        self.assert_readable(state)
+        self.assertEqual((state["state"], state["active"], state["stop"]), ("LANE_CHANGE", True, False))
+
+    def test_waiting_for_the_next_gap_is_inner_hold(self):
+        planner = self.harness.node.planner
+        planner.state = planner.CHASE
+        self.assertEqual(planner.integration_state(planner.CHASE), "WAIT_GAP")   # first change
+        planner.lane_index = 1
+        self.assertEqual(planner.integration_state(planner.CHASE), "INNER_HOLD")
+
+
 def feed_route():
     return REPO / "data" / "routes" / "2026_molit_comp_global_path.txt"
 

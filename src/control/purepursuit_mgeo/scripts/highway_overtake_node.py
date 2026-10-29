@@ -407,6 +407,9 @@ class HighwayOvertakeNode:
         self.lead_emergency_pub.publish(Bool(data=lead_emergency))
         self.zone_pub.publish(Bool(data=bool(out.zone_active)))
         status.update({
+            # ROS time, like highway_lane_strategy: the v61 avoidance node and
+            # fusion drop a state without a fresh timestamp.
+            "timestamp": now.to_sec(),
             "active": bool(out.active), "stop": bool(stop), "reason": reason,
             "target_speed_mps": round(speed, 2), "fast_change_active": fast,
             "lead_brake_required": lead_brake, "lead_emergency_brake": lead_emergency,

@@ -753,10 +753,18 @@ class HighwayOvertakePlanner:
     FOLLOW = "FOLLOW"
     DONE = "DONE"
     # Names of highway_lane_strategy; route_mission_gate reads "LANE_CHANGE".
+    # Like it, WAIT_GAP means "still on the global path's lane": after the
+    # first change the wait for the next gap is INNER_HOLD, the state in which
+    # the v61 fusion accepts the ego's offset from the global path.
     INTEGRATION_STATE = {
         OFF: "OFF", WAIT_LANE: "WAIT_GAP", CHASE: "WAIT_GAP", CHANGE: "LANE_CHANGE",
         REACQUIRE: "INNER_HOLD", FOLLOW: "INNER_HOLD", DONE: "DONE",
     }
+
+    def integration_state(self, state: str) -> str:
+        if state == self.CHASE and self.lane_index > 0:
+            return "INNER_HOLD"
+        return self.INTEGRATION_STATE[state]
 
     def __init__(self, cfg: OvertakeConfig, route_points: Sequence[Point]) -> None:
         self.cfg = cfg
@@ -1084,7 +1092,7 @@ class HighwayOvertakePlanner:
         out = PlannerOutput(state=self.state)
         if self.odom is None or now - self.odom[0] > cfg.odom_timeout_s:
             out.stop = True
-            out.status = {"state": self.INTEGRATION_STATE[self.state], "phase": self.state,
+            out.status = {"state": self.integration_state(self.state), "phase": self.state,
                           "reason": "odom_stale"}
             return out
         _, ex, ey, eyaw, ev = self.odom
@@ -1367,7 +1375,7 @@ class HighwayOvertakePlanner:
 
     def _common_status(self, out: PlannerOutput, route_s: float) -> Dict:
         status = {
-            "state": self.INTEGRATION_STATE[out.state],
+            "state": self.integration_state(out.state),
             "phase": out.state,
             "active": out.active,
             "zone_active": out.zone_active,
